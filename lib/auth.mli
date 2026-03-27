@@ -1,9 +1,9 @@
-(** 认证与权限管理 *)
+(** Authentication and permission management *)
 
 type permission =
-  | ReadOnly      (** 只读查看 *)
-  | Interactive   (** 可输入命令 *)
-  | Admin         (** 可管理会话 *)
+  | ReadOnly      (** Read-only viewing *)
+  | Interactive   (** Can input commands *)
+  | Admin         (** Can manage sessions *)
 
 type user_info = {
   username : string;
@@ -17,10 +17,10 @@ val authenticate :
   peer_gid:int ->
   shared_group:string ->
   (user_info, string) result
-(** 根据 Unix socket 凭证认证用户 *)
+(** Authenticate user based on Unix socket credentials *)
 
 val check_permission : permission -> action:string -> bool
-(** 检查权限是否允许某操作 *)
+(** Check if permission allows an action *)
 
 val string_of_permission : permission -> string
 val permission_of_string : string -> permission option

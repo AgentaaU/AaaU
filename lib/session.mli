@@ -1,4 +1,4 @@
-(** 单个 Agent 会话管理 *)
+(** Single Agent session management *)
 
 type t
 
@@ -13,9 +13,15 @@ type client = {
 val create :
   session_id:string ->
   creator:string ->
+  agent_user:string ->
+  ?program:string ->
+  ?args:string list ->
+  rows:int ->
+  cols:int ->
   audit:Audit.t ->
   (t, string) result Lwt.t
-(** 创建新会话，启动 agent *)
+(** Create new session, start agent with specified terminal size.
+    Default program is /bin/bash. Use ~program:"kimi-cli" to run kimi-cli as agent. *)
 
 val add_client :
   t ->
@@ -23,23 +29,23 @@ val add_client :
   addr:string ->
   user_info:Auth.user_info ->
   (client, string) result Lwt.t
-(** 添加客户端到会话 *)
+(** Add client to session *)
 
 val remove_client : t -> client -> unit Lwt.t
-(** 移除客户端 *)
+(** Remove client *)
 
 val handle_client_input :
   t ->
   client:client ->
   data:string ->
   unit Lwt.t
-(** 处理客户端输入 *)
+(** Handle client input *)
 
 val is_alive : t -> bool
-(** 检查 agent 是否存活 *)
+(** Check if agent is alive *)
 
 val shutdown : t -> unit Lwt.t
-(** 关闭会话 *)
+(** Close session *)
 
 val get_id : t -> string
 val get_clients : t -> client list

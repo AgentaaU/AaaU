@@ -1,10 +1,18 @@
-(** PTY 操作实现 *)
+(** PTY operations implementation using Linux API *)
 
-open Lwt.Syntax
+(* External C bindings *)
+external openpt : int -> int = "aaau_openpt"
+external grantpt : int -> unit = "aaau_grantpt"
+external unlockpt : int -> unit = "aaau_unlockpt"
+external ptsname : int -> string = "aaau_ptsname"
+external set_winsize : int -> int -> int -> unit = "aaau_set_winsize"
+external get_winsize : int -> (int * int) = "aaau_get_winsize"
+external set_ctty : int -> unit = "aaau_set_ctty"
 
 type t = {
   master_fd : Unix.file_descr;
   slave_path : string;
+  mutable lwt_fd : Lwt_unix.file_descr option;
 }
 
 type slave = string
@@ -12,58 +20,51 @@ type slave = string
 let get_slave_path pty = pty.slave_path
 let fd pty = pty.master_fd
 
-(* 打开 PTY *)
+(* Convert file_descr to int for C bindings *)
+let fd_to_int fd = (Obj.magic fd : int)
+let int_to_fd i = (Obj.magic i : Unix.file_descr)
+
+(* Open PTY using Linux API *)
 let open_pty () =
   try
-    (* 使用 posix_openpt - 在 OCaml 中通过 Unix 模块实现 *)
-    let master_fd =
-      Unix.openfile "/dev/ptmx" [Unix.O_RDWR; Unix.O_NOCTTY] 0
-    in
+    (* Open master PTY using posix_openpt *)
+    let flags = 0x02 lor 0x100 in (* O_RDWR | O_NOCTTY *)
+    let master_int = openpt flags in
+    let master_fd = int_to_fd master_int in
 
-    (* 解锁 PTY *)
-    let unlock_ptty () =
-      (* 使用 ioctl 解锁 PTY *)
-      (* 在 OCaml 中 ioctl 需要 C 绑定，这里简化处理 *)
-      ()
-    in
+    (* Grant access to slave *)
+    grantpt master_int;
 
-    (* 获取 slave 名称 *)
-    let ptsname () =
-      (* 使用 ptsname_r - 需要通过 C 绑定或外部调用 *)
-      (* 简化：使用 shell 命令获取 *)
-      let fd_str = string_of_int (Obj.magic master_fd : int) in
-      let proc_path = "/proc/self/fd/" ^ fd_str in
-      let slave_path = Unix.readlink proc_path in
-      (* 解析 /dev/pts/N *)
-      if String.length slave_path > 0 then
-        slave_path
-      else
-        failwith "Failed to get ptsname"
-    in
+    (* Unlock PTY *)
+    unlockpt master_int;
 
-    unlock_ptty ();
-    let slave = ptsname () in
+    (* Get slave device path *)
+    let slave = ptsname master_int in
 
-    Ok ({ master_fd; slave_path = slave }, slave)
+    (* Validate the slave path *)
+    if not (String.starts_with ~prefix:"/dev/pts/" slave) then
+      Error (Printf.sprintf "Invalid slave device path: %s" slave)
+    else begin
+      (* Change permissions of slave device so agent user can access it *)
+      let _ = Sys.command (Printf.sprintf "chmod 666 %s 2>/dev/null || true" slave) in
+      
+      (* Set master fd to non-blocking mode for Lwt *)
+      Unix.set_nonblock master_fd;
+      
+      Ok ({ master_fd; slave_path = slave; lwt_fd = None }, slave)
+    end
   with
   | Unix.Unix_error (err, fn, arg) ->
     Error (Printf.sprintf "Unix error in %s(%s): %s" fn arg (Unix.error_message err))
+  | Failure msg ->
+    Error (Printf.sprintf "PTY error: %s" msg)
   | e -> Error (Printexc.to_string e)
 
-(* 设置原始模式 *)
+(* Set raw mode on caller's terminal *)
 let set_raw_mode fd =
-  let tcgetattr fd =
-    (* 使用 Unix.tcgetattr *)
-    Unix.tcgetattr fd
-  in
-  let tcsetattr fd attr =
-    Unix.tcsetattr fd Unix.TCSANOW attr
-  in
-
-  let attr = tcgetattr fd in
+  let attr = Unix.tcgetattr fd in
   let new_attr = {
     attr with
-    (* 输入模式 *)
     c_ignbrk = false;
     c_brkint = false;
     c_ignpar = false;
@@ -75,89 +76,140 @@ let set_raw_mode fd =
     c_icrnl = false;
     c_ixon = false;
     c_ixoff = false;
-
-    (* 输出模式 *)
     c_opost = false;
-
-    (* 本地模式 *)
     c_isig = false;
     c_icanon = false;
     c_echo = false;
     c_echoe = false;
     c_echok = false;
     c_echonl = false;
-
-    (* 特殊字符 *)
     c_vmin = 1;
     c_vtime = 0;
   } in
-  tcsetattr fd new_attr
+  Unix.tcsetattr fd Unix.TCSANOW new_attr
 
-(* 设置终端大小 *)
+(* Set terminal size using ioctl *)
 let set_terminal_size fd ~rows ~cols =
-  (* 使用 ioctl 设置终端大小 *)
-  (* 在 OCaml 中 ioctl 需要 C 绑定，这里简化处理 *)
-  ignore (fd, rows, cols);
-  ()
+  try
+    let fd_int = fd_to_int fd in
+    set_winsize fd_int rows cols
+  with _ -> ()
 
-(* Fork 并切换到用户 *)
-let fork_agent ~slave ~user ~program ~args ~env =
+(* Get terminal size *)
+let get_terminal_size fd =
+  try
+    let fd_int = fd_to_int fd in
+    get_winsize fd_int
+  with _ -> (24, 80)
+
+(* Set controlling terminal *)
+let set_controlling_terminal fd =
+  try
+    let fd_int = fd_to_int fd in
+    set_ctty fd_int
+  with _ -> ()  (* Default fallback *)
+
+(* Configure PTY slave for interactive use *)
+let configure_slave fd =
+  try
+    let attr = Unix.tcgetattr fd in
+    let new_attr = {
+      attr with
+      (* Input modes: disable special processing *)
+      c_ignbrk = false;
+      c_brkint = false;
+      c_ignpar = false;
+      c_parmrk = false;
+      c_inpck = false;
+      c_istrip = false;
+      c_inlcr = false;
+      c_igncr = false;
+      c_icrnl = false;
+      c_ixon = false;
+      c_ixoff = false;
+      (* Output modes: disable processing *)
+      c_opost = false;
+      (* Local modes: raw mode but WITH echo enabled *)
+      c_isig = true;      (* Enable signal chars like Ctrl-C *)
+      c_icanon = true;    (* Enable canonical mode for line editing *)
+      c_echo = true;      (* ENABLE echo so user sees what they type *)
+      c_echoe = true;     (* Echo erase character as backspace *)
+      c_echok = true;     (* Echo NL after kill *)
+      c_echonl = false;
+      (* Blocking read *)
+      c_vmin = 1;
+      c_vtime = 0;
+    } in
+    Unix.tcsetattr fd Unix.TCSANOW new_attr
+  with _ -> ()
+
+(* Fork and switch to user *)
+let fork_agent ~slave ~user ~program ~args ~env ~rows ~cols =
   try
     let slave_fd = Unix.openfile slave [Unix.O_RDWR] 0 in
+
+    (* Set terminal size before fork *)
+    set_terminal_size slave_fd ~rows ~cols;
 
     let pid = Unix.fork () in
 
     if pid = 0 then begin
-      (* 子进程 *)
+      (* Child process *)
       try
-        (* 创建新会话 *)
+        (* Create new session - this detaches from current controlling terminal *)
         let _ = Unix.setsid () in
 
-        (* 设置控制终端 *)
-        (* TIOCSCTTY - ioctl 需要 C 绑定 *)
-        let () = () in
+        (* Open slave as controlling terminal *)
+        let slave_ctl = Unix.openfile slave [Unix.O_RDWR] 0 in
+        
+        (* Set the slave as the controlling terminal for this session *)
+        set_controlling_terminal slave_ctl;
 
-        (* 复制到标准 IO *)
-        Unix.dup2 slave_fd Unix.stdin;
-        Unix.dup2 slave_fd Unix.stdout;
-        Unix.dup2 slave_fd Unix.stderr;
+        (* Configure PTY slave as raw terminal *)
+        configure_slave slave_ctl;
 
-        (* 关闭不需要的 fd *)
+        (* Duplicate to standard IO *)
+        Unix.dup2 slave_ctl Unix.stdin;
+        Unix.dup2 slave_ctl Unix.stdout;
+        Unix.dup2 slave_ctl Unix.stderr;
+
+        (* Close the original slave_ctl since it's now stdin/stdout/stderr *)
+        Unix.close slave_ctl;
+        
+        (* Close the PTY master fd in child *)
         Unix.close slave_fd;
 
-        (* 获取用户信息 *)
+        (* Get user information *)
         let user_entry = Unix.getpwnam user in
         let group_entry = Unix.getgrnam user in
 
-        (* 初始化组列表并切换 *)
+        (* Initialize group list and switch *)
         let gid = group_entry.Unix.gr_gid in
         let uid = user_entry.Unix.pw_uid in
 
-        (* setgroups, setgid, setuid *)
-        (* OCaml 标准库没有 setgroups，需要外部调用或 C 绑定 *)
-        (* 使用 sudo 作为替代方案 *)
+        (* Clear supplementary groups *)
+        let _ = Unix.setgroups [||] in
+        
+        (* Switch to agent user *)
+        Unix.setgid gid;
+        Unix.setuid uid;
 
-        (* 设置环境 *)
+        (* Set environment *)
         List.iter (fun (k, v) -> Unix.putenv k v) env;
         Unix.putenv "HOME" user_entry.Unix.pw_dir;
         Unix.putenv "USER" user;
 
-        (* 切换目录 *)
+        (* Change directory *)
         Unix.chdir user_entry.Unix.pw_dir;
 
-        (* 执行程序 *)
-        (* 由于 OCaml 没有直接的 setuid，我们使用 sudo 辅助 *)
-        let sudo_args =
-          ["-u"; user; "-g"; user; "--"] @
-          [program] @ args
-        in
-        Unix.execvp "sudo" (Array.of_list ("sudo" :: sudo_args))
+        (* Execute program *)
+        Unix.execvp program (Array.of_list (program :: args))
 
       with e ->
         Printf.eprintf "Agent startup failed: %s\n%!" (Printexc.to_string e);
         Unix._exit 1
     end else begin
-      (* 父进程 *)
+      (* Parent process *)
       Unix.close slave_fd;
       Ok pid
     end
@@ -165,17 +217,28 @@ let fork_agent ~slave ~user ~program ~args ~env =
   with
   | Unix.Unix_error (err, fn, arg) ->
     Error (Printf.sprintf "Fork error in %s(%s): %s" fn arg (Unix.error_message err))
-  | e -> Error (Printexc.to_string e)
+  | e -> Error (Printf.sprintf "Fork error: %s" (Printexc.to_string e))
 
-(* Lwt 包装 *)
+(* Get or create Lwt file descriptor with non-blocking mode *)
+let get_lwt_fd pty =
+  match pty.lwt_fd with
+  | Some fd -> fd
+  | None ->
+      let fd = Lwt_unix.of_unix_file_descr ~set_flags:true pty.master_fd in
+      pty.lwt_fd <- Some fd;
+      fd
+
+(* Lwt wrapper *)
 let read pty buf off len =
-  let lwt_fd = Lwt_unix.of_unix_file_descr pty.master_fd in
-  Lwt_unix.read lwt_fd buf off len
+  Lwt_unix.read (get_lwt_fd pty) buf off len
 
 let write pty buf off len =
-  let lwt_fd = Lwt_unix.of_unix_file_descr pty.master_fd in
-  Lwt_unix.write lwt_fd buf off len
+  Lwt_unix.write (get_lwt_fd pty) buf off len
 
 let close pty =
-  let lwt_fd = Lwt_unix.of_unix_file_descr pty.master_fd in
-  Lwt_unix.close lwt_fd
+  match pty.lwt_fd with
+  | Some fd -> Lwt_unix.close fd
+  | None -> 
+      (* Fallback to Unix close *)
+      Unix.close pty.master_fd;
+      Lwt.return_unit

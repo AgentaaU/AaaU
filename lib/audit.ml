@@ -1,4 +1,4 @@
-(** 审计日志实现 *)
+(** Audit log implementation *)
 
 open Lwt.Syntax
 
@@ -25,7 +25,7 @@ let create ~log_dir =
   let () =
     try Unix.mkdir log_dir 0o755 with Unix.Unix_error _ -> ()
   in
-  (* 简化日期格式，避免依赖 strftime *)
+  (* Simplified date format to avoid strftime dependency *)
   let time = Unix.time () in
   let tm = Unix.localtime time in
   let date = Printf.sprintf "%04d-%02d-%02d" 
@@ -70,7 +70,7 @@ let flush_to_disk t =
         List.map (fun r -> Yojson.Safe.to_string (record_to_json r)) records
       in
       let content = String.concat "\n" lines ^ "\n" in
-      (* 使用 Lwt_io 追加模式写入 *)
+      (* Use Lwt_io append mode to write *)
       let flags = [Unix.O_WRONLY; Unix.O_CREAT; Unix.O_APPEND] in
       let* fd = Lwt_unix.openfile t.current_file flags 0o644 in
       let oc = Lwt_io.of_fd ~mode:Lwt_io.output fd in

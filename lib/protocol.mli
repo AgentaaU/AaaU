@@ -1,31 +1,37 @@
-(** 客户端-服务器通信协议 *)
+(** Client-server communication protocol *)
 
 type client_message =
-  | Input of string           (** 普通输入 *)
-  | Resize of { rows : int; cols : int }  (** 终端大小调整 *)
-  | Ping                      (** 心跳 *)
-  | GetStatus                 (** 查询状态 *)
-  | ForceKill                 (** 强制终止（管理员） *)
+  | Input of string           (** Normal input *)
+  | Resize of { rows : int; cols : int }  (** Terminal resize *)
+  | Ping                      (** Heartbeat *)
+  | GetStatus                 (** Query status *)
+  | ForceKill                 (** Force kill (admin) *)
   | Unknown of string
 
 type server_message =
-  | Output of string          (** PTY 输出 *)
-  | Pong                      (** 心跳响应 *)
-  | Status of Yojson.Safe.t   (** 会话状态 *)
-  | Error of string           (** 错误消息 *)
-  | Control of string         (** 控制通知 *)
+  | Output of string          (** PTY output *)
+  | Pong                      (** Heartbeat response *)
+  | Status of Yojson.Safe.t   (** Session status *)
+  | Error of string           (** Error message *)
+  | Control of string         (** Control notification *)
 
 val encode_client : client_message -> string
-(** 编码客户端消息 *)
+(** Encode client message *)
 
 val decode_client : string -> client_message
-(** 解码客户端消息 *)
+(** Decode client message *)
 
 val encode_server : server_message -> string
-(** 编码服务器消息 *)
+(** Encode server message *)
 
 val decode_server : string -> server_message
-(** 解码服务器消息 *)
+(** Decode server message *)
 
 val is_control : string -> bool
-(** 检查是否为控制消息（以 \x01 开头） *)
+(** Check if it's a control message (starts with \x01) *)
+
+val frame_message : string -> string
+(** Add length framing to a message: 4-byte length prefix + message *)
+
+val try_parse_framed : string -> (string * string) option
+(** Try to parse a framed message. Returns Some (message, remaining) if a complete message is found, None otherwise. *)

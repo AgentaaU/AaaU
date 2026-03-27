@@ -2,6 +2,9 @@
  (name AaaU)
  (public_name AaaU)
  (flags (:standard -warn-error -A))
+ (foreign_stubs
+  (language c)
+  (names pty_stubs))
  (libraries
   lwt lwt.unix
   logs logs.lwt

@@ -1,4 +1,4 @@
-(** 会话实现 *)
+(** Session implementation *)
 
 open Lwt.Syntax
 
@@ -59,16 +59,17 @@ type session = {
   pty : Pty.t;
   agent_pid : int;
 
-  (* 客户端管理 *)
+  (* Client management *)
   clients : (Lwt_unix.file_descr, client) Hashtbl.t;
   clients_lock : Lwt_mutex.t;
 
-  (* 通信 *)
+  (* Communication *)
   input_queue : string Lwt_queue.t;
   output_buffer : Buffer.t;
   output_cond : unit Lwt_condition.t;
+  mutable last_sent_pos : int;  (* Track what was already broadcast *)
 
-  (* 控制 *)
+  (* Control *)
   mutable running : bool;
 }
 
@@ -78,7 +79,7 @@ let get_id s = s.session_id
 let get_clients s = Hashtbl.fold (fun _ c acc -> c :: acc) s.clients []
 let get_agent_pid s = Some s.agent_pid
 
-(* 从 PTY 读取 agent 输出 *)
+(* Read agent output from PTY *)
 let rec pty_read_loop (t : session) =
   if not t.running then
     Lwt.return_unit
@@ -88,12 +89,22 @@ let rec pty_read_loop (t : session) =
       Lwt.catch
         (fun () -> Pty.read t.pty buf 0 4096)
         (fun e ->
-          let* () = Logs_lwt.err (fun m -> m "PTY read error: %s" (Printexc.to_string e)) in
+          (* EIO is expected when the agent process closes the PTY *)
+          let is_expected_error = match e with
+            | Unix.Unix_error (Unix.EIO, _, _) -> true
+            | _ -> false
+          in
+          let* () = 
+            if is_expected_error then
+              Logs_lwt.debug (fun m -> m "PTY closed (agent exited)")
+            else
+              Logs_lwt.err (fun m -> m "PTY read error: %s" (Printexc.to_string e))
+          in
           Lwt.return 0)
     in
 
     if n = 0 then (
-      (* EOF - agent 退出 *)
+      (* EOF - agent exited *)
       t.running <- false;
       Lwt_condition.broadcast t.output_cond ();
       let* () = Logs_lwt.info (fun m -> m "Agent EOF in session %s" t.session_id) in
@@ -101,41 +112,52 @@ let rec pty_read_loop (t : session) =
     ) else (
       let data = Bytes.sub_string buf 0 n in
 
-      (* 保存到缓冲 *)
+      (* Save to buffer *)
       Buffer.add_string t.output_buffer data;
-      let () = 
+      let () =
         if Buffer.length t.output_buffer > 100000 then
-          (* 保留后半部分 *)
+          (* Keep the latter half *)
           let content = Buffer.contents t.output_buffer in
           let keep = String.sub content (String.length content / 2) (String.length content / 2) in
           Buffer.reset t.output_buffer;
           Buffer.add_string t.output_buffer keep
       in
 
-      (* 通知广播 *)
+      (* Notify broadcast immediately for every output *)
       Lwt_condition.broadcast t.output_cond ();
 
-      (* 继续读取 *)
+      (* Yield to let broadcast run, then continue *)
+      let* () = Lwt.pause () in
       pty_read_loop t
     )
 
-(* 向 PTY 写入用户输入 *)
+(* Write user input to PTY - handles partial writes *)
 let rec pty_write_loop (t : session) =
   if not t.running then
     Lwt.return_unit
   else
     let* input = Lwt_queue.pop t.input_queue in
     let data = Bytes.of_string input in
-    let* _ =
-      Lwt.catch
-        (fun () -> Pty.write t.pty data 0 (Bytes.length data))
-        (fun e ->
-          let* () = Logs_lwt.err (fun m -> m "PTY write error: %s" (Printexc.to_string e)) in
-          Lwt.return 0)
+    let len = Bytes.length data in
+    let rec write_all offset remaining =
+      if remaining = 0 then
+        Lwt.return_unit
+      else
+        Lwt.catch
+          (fun () ->
+            let* written = Pty.write t.pty data offset remaining in
+            if written > 0 then
+              write_all (offset + written) (remaining - written)
+            else
+              Lwt.return_unit)
+          (fun e ->
+            let* () = Logs_lwt.err (fun m -> m "PTY write error: %s" (Printexc.to_string e)) in
+            Lwt.return_unit)
     in
+    let* () = write_all 0 len in
     pty_write_loop t
 
-(* 广播输出到所有客户端 *)
+(* Broadcast output to all clients *)
 let rec broadcast_loop (t : session) =
   if not t.running then
     Lwt.return_unit
@@ -144,58 +166,102 @@ let rec broadcast_loop (t : session) =
     if not t.running then
       Lwt.return_unit
     else
-      let data = Buffer.contents t.output_buffer in
-      let* () =
-        Lwt_mutex.with_lock t.clients_lock (fun () ->
-          let dead = ref [] in
-          
-          let send_to_client fd client =
-            Lwt.catch
-              (fun () ->
-                let bytes = Bytes.of_string data in
-                Lwt_unix.write client.socket bytes 0 (String.length data) >>= fun _ ->
-                Lwt.return_unit)
-              (fun _ ->
-                dead := fd :: !dead;
-                Lwt.return_unit)
-          in
+      (* Get only new data since last broadcast *)
+      let buf_len = Buffer.length t.output_buffer in
+      if buf_len > t.last_sent_pos then (
+        let data = Buffer.sub t.output_buffer t.last_sent_pos (buf_len - t.last_sent_pos) in
+        t.last_sent_pos <- buf_len;
+        let* () =
+          Lwt_mutex.with_lock t.clients_lock (fun () ->
+            let dead = ref [] in
 
-          let* () =
-            Hashtbl.fold
-              (fun fd c acc -> let* () = send_to_client fd c in acc)
-              t.clients
-              Lwt.return_unit
-          in
+            let send_to_client fd client =
+              Lwt.catch
+                (fun () ->
+                  let rec write_all offset remaining =
+                    if remaining = 0 then
+                      Lwt.return_unit
+                    else
+                      let* written = Lwt_unix.write client.socket 
+                        (Bytes.unsafe_of_string data) offset remaining in
+                      if written > 0 then
+                        write_all (offset + written) (remaining - written)
+                      else
+                        Lwt.return_unit
+                  in
+                  write_all 0 (String.length data))
+                (fun _ ->
+                  dead := fd :: !dead;
+                  Lwt.return_unit)
+            in
 
-          (* 清理死客户端 *)
-          List.iter (fun fd -> Hashtbl.remove t.clients fd) !dead;
-          Lwt.return_unit
-        )
-      in
-      broadcast_loop t
+            let* () =
+              Hashtbl.fold
+                (fun fd c acc -> let* () = send_to_client fd c in acc)
+                t.clients
+                Lwt.return_unit
+            in
 
-let create ~session_id ~creator ~audit =
+            (* Clean up dead clients *)
+            List.iter (fun fd -> Hashtbl.remove t.clients fd) !dead;
+            Lwt.return_unit
+          )
+        in
+        broadcast_loop t
+      ) else
+        broadcast_loop t
+
+let create ~session_id ~creator ~agent_user ?(program="/bin/bash") ?(args=["-i"]) ~rows ~cols ~audit =
   let* () = Logs_lwt.info (fun m -> m "Creating session %s" session_id) in
 
-  (* 打开 PTY *)
+  (* Open PTY *)
   match Pty.open_pty () with
   | Error e -> Lwt.return_error e
   | Ok (pty, slave) ->
-    (* 启动 agent *)
+    (* Get agent user info for home directory *)
+    let agent_home = 
+      try (Unix.getpwnam agent_user).Unix.pw_dir
+      with Not_found -> 
+        try Unix.getenv "HOME"
+        with Not_found -> 
+          "/tmp"
+    in
+    (* Ensure home directory exists *)
+    let () = 
+      try 
+        if not (Sys.file_exists agent_home) then
+          Unix.mkdir agent_home 0o755
+      with _ -> ()
+    in
+    (* Start agent with full environment *)
     let env = [
       "TERM", "xterm-256color";
-      "CLAUDE_CODE_SESSION_ID", session_id;
-      "PATH", "/usr/local/bin:/usr/bin:/bin";
+      "COLORTERM", "truecolor";
+      "TERM_PROGRAM", "aaau";
+      "SESSION_ID", session_id;
+      "HOME", agent_home;
+      "USER", agent_user;
+      "LOGNAME", agent_user;
+      "PATH", Filename.concat agent_home ".local/bin" ^ ":/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin";
+      "XDG_CONFIG_HOME", Filename.concat agent_home ".config";
+      "XDG_CACHE_HOME", Filename.concat agent_home ".cache";
+      "XDG_DATA_HOME", Filename.concat agent_home ".local/share";
+      "SHELL", "/bin/bash";
     ] in
 
     match Pty.fork_agent
       ~slave
-      ~user:"claude-agent"
-      ~program:"/bin/bash"
-      ~args:[]
+      ~user:agent_user
+      ~program
+      ~args
       ~env
+      ~rows
+      ~cols
     with
-    | Error e -> Lwt.return_error e
+    | Error e -> 
+      (* Close PTY on fork failure *)
+      let* () = Pty.close pty in
+      Lwt.return_error e
     | Ok pid ->
       let session = {
         session_id;
@@ -209,10 +275,14 @@ let create ~session_id ~creator ~audit =
         input_queue = Lwt_queue.create ();
         output_buffer = Buffer.create 102400;
         output_cond = Lwt_condition.create ();
+        last_sent_pos = 0;
         running = true;
       } in
 
-      (* 审计记录 *)
+      (* PTY slave is configured in fork_agent; master doesn't need raw mode *)
+      ();
+
+      (* Audit record *)
       let* () = Audit.log audit {
         timestamp = Unix.time ();
         source = "system";
@@ -223,7 +293,7 @@ let create ~session_id ~creator ~audit =
         metadata = ["pty", (Pty.get_slave_path pty :> string)];
       } in
 
-      (* 启动处理循环 *)
+      (* Start processing loops *)
       Lwt.async (fun () -> pty_read_loop session);
       Lwt.async (fun () -> pty_write_loop session);
       Lwt.async (fun () -> broadcast_loop session);
@@ -245,20 +315,29 @@ let add_client t ~socket ~addr ~user_info =
 
       Hashtbl.add t.clients socket client;
 
-      (* 发送历史输出 *)
+      (* Send history output *)
       let history = Buffer.contents t.output_buffer in
-      if String.length history > 0 then
-        let* () =
-          Lwt.catch
-            (fun () -> 
-              let bytes = Bytes.of_string history in
-              Lwt_unix.write socket bytes 0 (String.length history) >>= fun _ ->
+      let* () =
+        Lwt.catch
+          (fun () ->
+            let rec write_all offset remaining =
+              if remaining = 0 then
+                Lwt.return_unit
+              else
+                let* written = Lwt_unix.write socket 
+                  (Bytes.unsafe_of_string history) offset remaining in
+                if written > 0 then
+                  write_all (offset + written) (remaining - written)
+                else
+                  Lwt.return_unit
+            in
+            if String.length history > 0 then
+              write_all 0 (String.length history)
+            else
               Lwt.return_unit)
-            (fun _ -> Lwt.return_unit)
-        in
-        Lwt.return_ok client
-      else
-        Lwt.return_ok client
+          (fun _ -> Lwt.return_unit)
+      in
+      Lwt.return_ok client
   )
 
 let remove_client t client =
@@ -267,7 +346,7 @@ let remove_client t client =
     Lwt.return_unit
   )
 
-(* 检查 agent 是否存活 *)
+(* Check if agent is alive *)
 let is_alive t =
   try
     Unix.kill t.agent_pid 0;
@@ -278,15 +357,15 @@ let shutdown t =
   t.running <- false;
   Lwt_condition.broadcast t.output_cond ();
 
-  (* 终止 agent *)
+  (* Terminate agent *)
   (try Unix.kill t.agent_pid Sys.sigterm with _ -> ());
   let* () = Lwt_unix.sleep 1.0 in
   (try Unix.kill t.agent_pid Sys.sigkill with _ -> ());
 
-  (* 关闭 PTY *)
+  (* Close PTY *)
   let* () = Pty.close t.pty in
 
-  (* 断开所有客户端 *)
+  (* Disconnect all clients *)
   let* () =
     Lwt_mutex.with_lock t.clients_lock (fun () ->
       Hashtbl.iter (fun fd _ ->
@@ -296,7 +375,7 @@ let shutdown t =
     )
   in
 
-  (* 刷审计日志 *)
+  (* Flush audit logs *)
   Audit.flush t.audit
 
 let rec handle_client_input t ~client ~data =
@@ -306,7 +385,7 @@ let rec handle_client_input t ~client ~data =
 
   match msg with
   | Protocol.Input text ->
-    (* 权限检查 *)
+    (* Permission check *)
     (match client.user_info.Auth.permission with
      | Auth.ReadOnly ->
        let* () =
@@ -321,7 +400,7 @@ let rec handle_client_input t ~client ~data =
        Lwt.return_unit
 
      | Auth.Interactive | Auth.Admin ->
-       (* 审计记录 *)
+       (* Audit record *)
        let* () = Audit.log t.audit {
          timestamp = Unix.time ();
          source = "human";
@@ -332,7 +411,7 @@ let rec handle_client_input t ~client ~data =
          metadata = [];
        } in
 
-       (* 加入输入队列 *)
+       (* Add to input queue *)
        Lwt_queue.push text t.input_queue)
 
   | Protocol.Resize { rows; cols } ->
@@ -343,7 +422,7 @@ let rec handle_client_input t ~client ~data =
     let pong = Protocol.encode_server Protocol.Pong in
     let* () =
       Lwt.catch
-        (fun () -> 
+        (fun () ->
           let bytes = Bytes.of_string pong in
           Lwt_unix.write client.socket bytes 0 (String.length pong) >>= fun _ ->
           Lwt.return_unit)
@@ -360,7 +439,7 @@ let rec handle_client_input t ~client ~data =
     let resp = Protocol.encode_server (Protocol.Status status) in
     let* () =
       Lwt.catch
-        (fun () -> 
+        (fun () ->
           let bytes = Bytes.of_string resp in
           Lwt_unix.write client.socket bytes 0 (String.length resp) >>= fun _ ->
           Lwt.return_unit)
@@ -379,7 +458,7 @@ let rec handle_client_input t ~client ~data =
        let err = Protocol.encode_server (Protocol.Error "Permission denied") in
        let* () =
          Lwt.catch
-           (fun () -> 
+           (fun () ->
              let bytes = Bytes.of_string err in
              Lwt_unix.write client.socket bytes 0 (String.length err) >>= fun _ ->
              Lwt.return_unit)

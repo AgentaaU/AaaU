@@ -1,19 +1,25 @@
-(** PTY (Pseudo Terminal) 操作接口 *)
+(** PTY (Pseudo Terminal) operations interface *)
 
 type t
-(** PTY master 文件描述符封装 *)
+(** PTY master file descriptor wrapper *)
 
 type slave = private string
-(** PTY slave 设备路径 *)
+(** PTY slave device path *)
 
 val open_pty : unit -> (t * slave, string) result
-(** 打开新的 PTY master/slave 对 *)
+(** Open a new PTY master/slave pair *)
 
 val set_raw_mode : Unix.file_descr -> unit
-(** 设置原始终端模式 *)
+(** Set raw terminal mode on caller's terminal *)
 
 val set_terminal_size : Unix.file_descr -> rows:int -> cols:int -> unit
-(** 设置终端窗口大小 (TIOCSWINSZ) *)
+(** Set terminal window size (TIOCSWINSZ) *)
+
+val get_terminal_size : Unix.file_descr -> (int * int)
+(** Get terminal window size (TIOCGWINSZ), returns (rows, cols) *)
+
+val set_controlling_terminal : Unix.file_descr -> unit
+(** Set the file descriptor as the controlling terminal (TIOCSCTTY) *)
 
 val fork_agent :
   slave:slave ->
@@ -21,23 +27,25 @@ val fork_agent :
   program:string ->
   args:string list ->
   env:(string * string) list ->
+  rows:int ->
+  cols:int ->
   (int, string) result
 (**
-  Fork 子进程，切换到指定用户，在 PTY slave 中执行程序。
-  返回子进程 PID。
+  Fork child process, switch to specified user, execute program in PTY slave.
+  Returns child process PID. Terminal size is set to rows x cols.
 *)
 
 val read : t -> bytes -> int -> int -> int Lwt.t
-(** 从 PTY master 读取数据 *)
+(** Read data from PTY master *)
 
 val write : t -> bytes -> int -> int -> int Lwt.t
-(** 向 PTY master 写入数据 *)
+(** Write data to PTY master *)
 
 val close : t -> unit Lwt.t
-(** 关闭 PTY master *)
+(** Close PTY master *)
 
 val fd : t -> Unix.file_descr
-(** 获取底层文件描述符（用于 select/poll） *)
+(** Get underlying file descriptor (for select/poll) *)
 
 val get_slave_path : t -> slave
-(** 获取 slave 路径 *)
+(** Get slave path *)

@@ -1,4 +1,4 @@
-(** 协议实现 - 简单文本协议 *)
+(** Protocol implementation - simple text protocol *)
 
 type client_message =
   | Input of string
@@ -66,3 +66,33 @@ let decode_server s =
 
 let is_control s =
   String.length s > 0 && s.[0] = control_char
+
+(* Frame a message with 4-byte length prefix (big-endian) *)
+let frame_message msg =
+  let len = String.length msg in
+  let framed = Bytes.create (4 + len) in
+  Bytes.set_int32_be framed 0 (Int32.of_int len);
+  Bytes.blit_string msg 0 framed 4 len;
+  Bytes.unsafe_to_string framed
+
+(* Try to parse a framed message. Returns Some (message, remaining) if complete *)
+let try_parse_framed buf =
+  if String.length buf < 4 then
+    None
+  else
+    let len = Int32.to_int (Bytes.get_int32_be (Bytes.unsafe_of_string buf) 0) in
+    if len < 0 || len > 1000000 then
+      (* Invalid length - skip this buffer *)
+      None
+    else if String.length buf >= 4 + len then
+      let msg = String.sub buf 4 len in
+      let remaining =
+        if String.length buf > 4 + len then
+          String.sub buf (4 + len) (String.length buf - 4 - len)
+        else
+          ""
+      in
+      Some (msg, remaining)
+    else
+      (* Incomplete message *)
+      None

@@ -81,14 +81,30 @@ sudo cp _build/install/default/bin/aaau-client /usr/local/bin/
 
 ## Setup
 
-### 1. Create Agent User
+### Quick Setup with Init Command
+
+```bash
+# Initialize everything with defaults
+sudo aaau-server init
+
+# The init command creates:
+# - User: agent
+# - Group: agent  
+# - Directories: /var/run/aaau, /var/log/aaau
+```
+
+### Manual Setup (Alternative)
+
+If you prefer to set up manually:
+
+#### 1. Create Agent User
 
 ```bash
 # Create dedicated user for running agents
-sudo useradd -r -s /bin/false -d /var/lib/agents/default agent
+sudo useradd -r -s /bin/false -d /home/agent agent
 ```
 
-### 2. Create Shared Group
+#### 2. Create Shared Group
 
 ```bash
 # Create group for authorized human users
@@ -96,7 +112,7 @@ sudo groupadd agent-shared
 sudo usermod -aG agent-shared $USER
 ```
 
-### 3. Create Directories
+#### 3. Create Directories
 
 ```bash
 sudo mkdir -p /var/run/aaau
@@ -107,21 +123,45 @@ sudo chmod 775 /var/run/aaau
 
 ## Usage
 
+### Initialize Environment
+
+Before running the server for the first time, initialize the environment:
+
+```bash
+# Initialize with defaults
+sudo aaau-server init
+
+# Or customize all options
+sudo aaau-server init \
+  -u agent \
+  -g agent-shared \
+  -s /var/run/aaau/server.sock \
+  -l /var/log/aaau \
+  -h /home/agent
+```
+
+The `init` command will:
+1. Create the shared group (e.g., `agent`)
+2. Create the agent user (e.g., `agent`)
+3. Create socket directory with proper permissions
+4. Create log directory with proper permissions
+5. Display sudo configuration suggestions
+
 ### Start the Server
 
 ```bash
 # Run in foreground
-sudo aaau-server -s /var/run/aaau/server.sock -g agent-shared
+sudo aaau-server run -s /var/run/aaau.sock -g agent
 
 # Or as daemon
-sudo aaau-server -d -s /var/run/aaau/server.sock -g agent-shared
+sudo aaau-server run -d -s /var/run/aaau.sock -g agent
 ```
 
 Options:
-- `-s, --socket`: Unix socket path (default: `/var/run/claude-bridge.sock`)
-- `-g, --group`: Authorized group name (default: `claude-shared`)
-- `-u, --user`: Agent system user (default: `claude-agent`)
-- `-l, --log-dir`: Audit log directory (default: `/var/log/claude-bridge`)
+- `-s, --socket`: Unix socket path (default: `/var/run/aaau.sock`)
+- `-g, --group`: Authorized group name (default: `agent`)
+- `-u, --user`: Agent system user (default: `agent`)
+- `-l, --log-dir`: Audit log directory (default: `/var/log/aaau`)
 - `-d, --daemon`: Run as daemon
 
 ### Connect with Client

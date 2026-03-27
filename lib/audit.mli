@@ -1,4 +1,4 @@
-(** 审计日志系统 *)
+(** Audit log system *)
 
 type record = {
   timestamp : float;
@@ -13,13 +13,13 @@ type record = {
 type t
 
 val create : log_dir:string -> t
-(** 创建审计日志器 *)
+(** Create audit logger *)
 
 val log : t -> record -> unit Lwt.t
-(** 记录一条日志 *)
+(** Record a log entry *)
 
 val flush : t -> unit Lwt.t
-(** 强制刷盘 *)
+(** Force flush to disk *)
 
 val close : t -> unit Lwt.t
-(** 关闭日志 *)
+(** Close log *)

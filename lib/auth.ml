@@ -1,4 +1,4 @@
-(** 认证实现 *)
+(** Authentication implementation *)
 
 type permission =
   | ReadOnly
@@ -25,18 +25,18 @@ let permission_of_string = function
 
 let authenticate ~peer_uid ~peer_gid ~shared_group =
   try
-    (* 获取用户信息 *)
+    (* Get user information *)
     let user_entry = Unix.getpwuid peer_uid in
     let username = user_entry.Unix.pw_name in
 
-    (* 检查是否在共享组中 *)
+    (* Check if in shared group *)
     let shared_gid = (Unix.getgrnam shared_group).Unix.gr_gid in
 
     let in_shared_group =
       peer_gid = shared_gid ||
-      (* 获取用户的组列表 *)
+      (* Get user's group list *)
       try
-        (* 获取当前进程的所有组 *)
+        (* Get all groups of current process *)
         let groups = Unix.getgroups () in
         Array.mem shared_gid groups
       with _ -> false
@@ -45,8 +45,8 @@ let authenticate ~peer_uid ~peer_gid ~shared_group =
     if not in_shared_group then
       Error (Printf.sprintf "User %s not in shared group %s" username shared_group)
     else
-      (* 简单权限策略：uid 1000 以下为系统用户，给予 admin *)
-      (* 实际应根据配置文件或数据库 *)
+      (* Simple permission policy: system users with uid < 1000 get admin *)
+      (* In practice, should use config file or database *)
       let permission =
         if peer_uid < 1000 then Admin
         else Interactive
