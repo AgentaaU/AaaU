@@ -368,6 +368,33 @@ let test_check_program () =
   Printf.printf "Test check_program: %s\n%!" (if result then "PASS" else "FAIL");
   result
 
+
+(* Test check_program with non-existent command (not full path) *)
+let test_check_program_command () =
+  (* Test that fork_agent properly rejects non-existent commands in PATH *)
+  let user = 
+    try Unix.getlogin ()
+    with _ -> Unix.getenv "USER"
+  in
+  let result = 
+    if not (has_pty_support ()) then
+      true
+    else
+      match Pty.open_pty () with
+      | Error _ -> true  (* Can't test without PTY *)
+      | Ok (pty, slave) ->
+          (* Try to fork with non-existent command (not a full path) *)
+          match Pty.fork_agent ~slave ~user 
+                  ~program:"nonexistent_command_xyz" ~args:[] ~env:[] ~rows:24 ~cols:80 with
+          | Error msg when String.starts_with ~prefix:"Program not found" msg ->
+              let () = Lwt_main.run (Pty.close pty) in
+              true
+          | _ ->
+              let () = Lwt_main.run (Pty.close pty) in
+              false
+  in
+  Printf.printf "Test check_program_command: %s\n%!" (if result then "PASS" else "FAIL");
+  result
 (* Test that fork_agent creates PTY with correct terminal size
    Regression test for: opencode didn't occupy the entire window of terminal *)
 let test_fork_agent_terminal_size () =
@@ -521,8 +548,11 @@ let () =
   Printf.printf "\nTest 13: Terminal echo (input appears as output)\n%!";
   let test13 = test_terminal_echo () in
   
+  Printf.printf "\nTest 14: Check program existence (command in PATH)\n%!";
+  let test14 = test_check_program_command () in
+  
   Printf.printf "\n=== Test Summary ===\n%!";
-  let results = [test1; test2; test3; test4; test5; test6; test7; test8; test9; test10; test11; test12; test13] in
+  let results = [test1; test2; test3; test4; test5; test6; test7; test8; test9; test10; test11; test12; test13; test14] in
   let passed = List.fold_left (fun acc r -> if r then acc + 1 else acc) 0 results in
   let total = List.length results in
   Printf.printf "Passed: %d/%d\n%!" passed total;
