@@ -398,6 +398,10 @@ let test_check_program_command () =
 (* Test that fork_agent creates PTY with correct terminal size
    Regression test for: opencode didn't occupy the entire window of terminal *)
 let test_fork_agent_terminal_size () =
+  let user = 
+    try Unix.getlogin ()
+    with _ -> Unix.getenv "USER"
+  in
   if not (has_pty_support ()) then begin
     Printf.printf "SKIP: No PTY support in this environment\n%!";
     true
@@ -412,7 +416,7 @@ let test_fork_agent_terminal_size () =
         let expected_cols = 120 in
         
         (* Fork a simple command that exits immediately *)
-        match Pty.fork_agent ~slave ~user:(Unix.getlogin ())
+        match Pty.fork_agent ~slave ~user
                 ~program:"/bin/true" ~args:[] ~env:[]
                 ~rows:expected_rows ~cols:expected_cols with
         | Error msg ->
@@ -444,6 +448,10 @@ let test_fork_agent_terminal_size () =
 (* Test terminal echo - verify input appears as output
    Regression test for: can't see what I typed after running client *)
 let test_terminal_echo () =
+  let user = 
+    try Unix.getlogin ()
+    with _ -> Unix.getenv "USER"
+  in
   if not (has_pty_support ()) then begin
     Printf.printf "SKIP: No PTY support in this environment\n%!";
     true
@@ -454,7 +462,7 @@ let test_terminal_echo () =
         false
     | Ok (pty, slave) ->
         (* Fork a shell that will echo input *)
-        match Pty.fork_agent ~slave ~user:(Unix.getlogin ())
+        match Pty.fork_agent ~slave ~user
                 ~program:"/bin/sh" ~args:["-c"; "read line; echo $line"] ~env:[]
                 ~rows:24 ~cols:80 with
         | Error msg ->

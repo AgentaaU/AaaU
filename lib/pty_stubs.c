@@ -107,13 +107,6 @@ CAMLprim value aaau_ptsname(value v_fd)
 #define TIOCSWINSZ 0x5414
 #endif
 
-struct winsize {
-    unsigned short ws_row;
-    unsigned short ws_col;
-    unsigned short ws_xpixel;
-    unsigned short ws_ypixel;
-};
-
 CAMLprim value aaau_set_winsize(value v_fd, value v_rows, value v_cols)
 {
     CAMLparam3(v_fd, v_rows, v_cols);
