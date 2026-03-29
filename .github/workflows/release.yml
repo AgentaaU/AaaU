@@ -9,22 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  create-release:
-    runs-on: ubuntu-latest
-    outputs:
-      release_id: ${{ steps.create.outputs.release_id }}
-    steps:
-      - name: Create draft release
-        id: create
-        uses: softprops/action-gh-release@v2
-        with:
-          draft: true
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  build:
-    needs: create-release
+  release:
     strategy:
       matrix:
         os:
@@ -60,20 +45,11 @@ jobs:
           cd release
           tar -czvf ${{ matrix.artifact_name }}.tar.gz aaau-server aaau
 
-      - name: Upload to Release
-        uses: softprops/action-gh-release@v2
+      - name: Create Release
+        uses: ncipollo/release-action@v1
         with:
-          files: release/${{ matrix.artifact_name }}.tar.gz
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  publish-release:
-    needs: [create-release, build]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Publish release
-        uses: softprops/action-gh-release@v2
-        with:
-          draft: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          artifacts: release/${{ matrix.artifact_name }}.tar.gz
+          allowUpdates: true
+          omitBodyDuringUpdate: true
+          generateReleaseNotes: true
+          token: ${{ secrets.GITHUB_TOKEN }}
