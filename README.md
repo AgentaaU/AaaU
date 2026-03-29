@@ -2,6 +2,43 @@
 
 A secure PTY (pseudo-terminal) bridge for running AI agents under isolated system users on Linux. This implements the "Agent-as-User" architecture where each agent runs as a dedicated system user, providing kernel-level isolation through standard Unix permissions.
 
+## Quick Start
+
+### 1. Install from GitHub Release
+
+```bash
+# Download the latest release
+wget https://github.com/YOUR_ORG/AaaU/releases/latest/download/aaau-linux.tar.gz
+
+# Extract binaries
+tar -xzf aaau-linux.tar.gz
+
+# Install to system
+sudo install server /usr/local/bin/aaau-server
+sudo install client /usr/local/bin/aaau
+```
+
+### 2. Initialize Agent User
+
+```bash
+# Create agent user and required directories
+sudo aaau-server init
+```
+
+### 3. Start the Server
+
+```bash
+# Run the server (requires sudo for PTY and user switching)
+sudo aaau-server run
+```
+
+### 4. Connect and Run Agent
+
+```bash
+# Connect client and run kimi-cli in agent user environment
+aaau -p kimi-cli
+```
+
 ## Overview
 
 ```
