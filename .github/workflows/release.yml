@@ -1,0 +1,51 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    strategy:
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+        include:
+          - os: ubuntu-latest
+            artifact_name: aaau-linux
+          - os: macos-latest
+            artifact_name: aaau-macos
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up OCaml
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: '5.4.1'
+
+      - name: Install dependencies
+        run: opam install . --deps-only
+
+      - name: Build binaries
+        run: opam exec -- dune build --release bin/server.exe bin/client.exe
+
+      - name: Prepare release artifacts
+        run: |
+          mkdir -p release
+          cp _build/default/bin/server.exe release/aaau-server
+          cp _build/default/bin/client.exe release/aaau
+          cd release
+          tar -czvf ${{ matrix.artifact_name }}.tar.gz aaau-server aaau
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/${{ matrix.artifact_name }}.tar.gz
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
