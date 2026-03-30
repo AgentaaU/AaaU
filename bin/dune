@@ -2,7 +2,8 @@
  (name server)
  (public_name aaau-server)
  (package AaaU)
- (flags (:standard -warn-error -A))
+ (flags
+  (:standard -warn-error -A))
  (modules server)
  (libraries AaaU cmdliner))
 
@@ -10,6 +11,7 @@
  (name client)
  (public_name aaau-client)
  (package AaaU)
- (flags (:standard -warn-error -A))
+ (flags
+  (:standard -warn-error -A))
  (modules client)
  (libraries AaaU cmdliner))

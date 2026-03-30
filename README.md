@@ -8,7 +8,7 @@ A secure PTY (pseudo-terminal) bridge for running AI agents under isolated syste
 
 ```bash
 # Download the latest release
-wget https://github.com/YOUR_ORG/AaaU/releases/latest/download/aaau-linux.tar.gz
+wget https://github.com/AgentaaU/AaaU/releases/latest/download/aaau-linux.tar.gz
 
 # Extract binaries
 tar -xzf aaau-linux.tar.gz

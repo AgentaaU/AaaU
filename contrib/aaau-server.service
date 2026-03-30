@@ -1,0 +1,40 @@
+[Unit]
+Description=Agent-as-User PTY Bridge Server
+Documentation=https://github.com/AgentaaU/AaaU
+After=network.target
+Wants=network.target
+
+[Service]
+Type=notify
+ExecStart=/usr/local/bin/aaau-server run --lock-file /var/run/aaau.lock
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5s
+
+# Run as root (required for PTY management and user switching)
+User=root
+Group=root
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=aaau-server
+
+# Security hardening
+NoNewPrivileges=false
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+# Allow PTY and socket operations
+CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SETUID CAP_SETGID CAP_AUDIT_WRITE
+AmbientCapabilities=CAP_SYS_ADMIN CAP_SETUID CAP_SETGID CAP_AUDIT_WRITE
+
+# Socket and lock file directory access
+ReadWritePaths=/var/run/aaau /var/log/aaau /var/lib/agents
+
+[Install]
+WantedBy=multi-user.target

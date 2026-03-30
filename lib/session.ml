@@ -94,7 +94,7 @@ let rec pty_read_loop (t : session) =
             | Unix.Unix_error (Unix.EIO, _, _) -> true
             | _ -> false
           in
-          let* () = 
+          let* () =
             if is_expected_error then
               Logs_lwt.debug (fun m -> m "PTY closed (agent exited)")
             else
@@ -105,10 +105,28 @@ let rec pty_read_loop (t : session) =
 
     if n = 0 then (
       (* EOF - agent exited *)
-      t.running <- false;
-      Lwt_condition.broadcast t.output_cond ();
-      let* () = Logs_lwt.info (fun m -> m "Agent EOF in session %s" t.session_id) in
-      Lwt.return_unit
+      if t.running then begin
+        t.running <- false;
+        Lwt_condition.broadcast t.output_cond ();
+        let* () = Logs_lwt.info (fun m -> m "Agent EOF in session %s" t.session_id) in
+        (* Close all client sockets so they get EOF and can exit *)
+        let fds_to_close = ref [] in
+        let* () =
+          Lwt_mutex.with_lock t.clients_lock (fun () ->
+            Hashtbl.iter (fun fd _ ->
+              fds_to_close := fd :: !fds_to_close
+            ) t.clients;
+            Hashtbl.clear t.clients;
+            Lwt.return_unit
+          )
+        in
+        (* Close sockets outside the lock *)
+        List.iter (fun fd ->
+          try Unix.close (Lwt_unix.unix_file_descr fd) with _ -> ()
+        ) !fds_to_close;
+        Lwt.return_unit
+      end else
+        Lwt.return_unit
     ) else (
       let data = Bytes.sub_string buf 0 n in
 
@@ -131,7 +149,7 @@ let rec pty_read_loop (t : session) =
       pty_read_loop t
     )
 
-(* Write user input to PTY - handles partial writes *)
+(* Write user input to PTY - handles partial writes with timeout *)
 let rec pty_write_loop (t : session) =
   if not t.running then
     Lwt.return_unit
@@ -143,21 +161,23 @@ let rec pty_write_loop (t : session) =
       if remaining = 0 then
         Lwt.return_unit
       else
-        Lwt.catch
-          (fun () ->
-            let* written = Pty.write t.pty data offset remaining in
-            if written > 0 then
-              write_all (offset + written) (remaining - written)
-            else
-              Lwt.return_unit)
-          (fun e ->
-            let* () = Logs_lwt.err (fun m -> m "PTY write error: %s" (Printexc.to_string e)) in
-            Lwt.return_unit)
+        Lwt.pick [
+          (* Try to write *)
+          (let* written = Pty.write t.pty data offset remaining in
+           if written > 0 then
+             write_all (offset + written) (remaining - written)
+           else
+             Lwt.return_unit);
+          (* Timeout after 5 seconds - PTY buffer full, agent may be stuck *)
+          (let* () = Lwt_unix.sleep 5.0 in
+           let* () = Logs_lwt.warn (fun m -> m "PTY write timeout - agent may be stuck") in
+           Lwt.return_unit);
+        ]
     in
     let* () = write_all 0 len in
     pty_write_loop t
 
-(* Broadcast output to all clients *)
+(* Broadcast output to all clients - with timeout to prevent blocking *)
 let rec broadcast_loop (t : session) =
   if not t.running then
     Lwt.return_unit
@@ -176,23 +196,26 @@ let rec broadcast_loop (t : session) =
             let dead = ref [] in
 
             let send_to_client fd client =
-              Lwt.catch
-                (fun () ->
-                  let rec write_all offset remaining =
-                    if remaining = 0 then
-                      Lwt.return_unit
-                    else
-                      let* written = Lwt_unix.write client.socket 
-                        (Bytes.unsafe_of_string data) offset remaining in
-                      if written > 0 then
-                        write_all (offset + written) (remaining - written)
-                      else
-                        Lwt.return_unit
-                  in
-                  write_all 0 (String.length data))
-                (fun _ ->
-                  dead := fd :: !dead;
-                  Lwt.return_unit)
+              Lwt.pick [
+                (* Try to write with timeout *)
+                (let rec write_all offset remaining =
+                   if remaining = 0 then
+                     Lwt.return_unit
+                   else
+                     let* written = Lwt_unix.write client.socket
+                       (Bytes.unsafe_of_string data) offset remaining in
+                     if written > 0 then
+                       write_all (offset + written) (remaining - written)
+                     else
+                       Lwt.return_unit
+                 in
+                 write_all 0 (String.length data));
+                (* Timeout after 5 seconds - client is too slow *)
+                (let* () = Lwt_unix.sleep 5.0 in
+                 let* () = Logs_lwt.warn (fun m -> m "Client %s slow, disconnecting" client.addr) in
+                 dead := fd :: !dead;
+                 Lwt.return_unit);
+              ]
             in
 
             let* () =
@@ -233,19 +256,12 @@ let create ~session_id ~creator ~agent_user ?(program="/bin/bash") ?(args=["-i"]
           Unix.mkdir agent_home 0o755
       with _ -> ()
     in
-    (* Start agent with full environment *)
+    (* Start agent with minimal environment - login shell will set the rest *)
     let env = [
       "TERM", "xterm-256color";
       "COLORTERM", "truecolor";
       "TERM_PROGRAM", "aaau";
       "SESSION_ID", session_id;
-      "HOME", agent_home;
-      "USER", agent_user;
-      "LOGNAME", agent_user;
-      "PATH", Filename.concat agent_home ".local/bin" ^ ":/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin";
-      "XDG_CONFIG_HOME", Filename.concat agent_home ".config";
-      "XDG_CACHE_HOME", Filename.concat agent_home ".cache";
-      "XDG_DATA_HOME", Filename.concat agent_home ".local/share";
       "SHELL", "/bin/bash";
     ] in
 
@@ -342,7 +358,8 @@ let add_client t ~socket ~addr ~user_info =
 
 let remove_client t client =
   Lwt_mutex.with_lock t.clients_lock (fun () ->
-    Hashtbl.remove t.clients client.socket;
+    if Hashtbl.mem t.clients client.socket then
+      Hashtbl.remove t.clients client.socket;
     Lwt.return_unit
   )
 
@@ -354,29 +371,32 @@ let is_alive t =
   with Unix.Unix_error _ -> false
 
 let shutdown t =
-  t.running <- false;
-  Lwt_condition.broadcast t.output_cond ();
+  if not t.running then
+    Lwt.return_unit
+  else
+    let () = t.running <- false in
+    Lwt_condition.broadcast t.output_cond ();
 
-  (* Terminate agent *)
-  (try Unix.kill t.agent_pid Sys.sigterm with _ -> ());
-  let* () = Lwt_unix.sleep 1.0 in
-  (try Unix.kill t.agent_pid Sys.sigkill with _ -> ());
+    (* Terminate agent *)
+    (try Unix.kill t.agent_pid Sys.sigterm with _ -> ());
+    let* () = Lwt_unix.sleep 1.0 in
+    (try Unix.kill t.agent_pid Sys.sigkill with _ -> ());
 
-  (* Close PTY *)
-  let* () = Pty.close t.pty in
+    (* Close PTY *)
+    let* () = Pty.close t.pty in
 
-  (* Disconnect all clients *)
-  let* () =
-    Lwt_mutex.with_lock t.clients_lock (fun () ->
-      Hashtbl.iter (fun fd _ ->
-        try Unix.close (Lwt_unix.unix_file_descr fd) with _ -> ()) t.clients;
-      Hashtbl.clear t.clients;
-      Lwt.return_unit
-    )
-  in
+    (* Disconnect all clients *)
+    let* () =
+      Lwt_mutex.with_lock t.clients_lock (fun () ->
+        Hashtbl.iter (fun fd _ ->
+          try Unix.close (Lwt_unix.unix_file_descr fd) with _ -> ()) t.clients;
+        Hashtbl.clear t.clients;
+        Lwt.return_unit
+      )
+    in
 
-  (* Flush audit logs *)
-  Audit.flush t.audit
+    (* Flush audit logs *)
+    Audit.flush t.audit
 
 let rec handle_client_input t ~client ~data =
   client.last_activity <- Unix.time ();

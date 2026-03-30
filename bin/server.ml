@@ -29,12 +29,87 @@ let default_program =
   let doc = "Default program to run as agent (e.g., /bin/bash, kimi-cli)" in
   Arg.(value & opt string "/bin/bash" & info ["p"; "program"] ~docv:"PROGRAM" ~doc)
 
-let run_server socket_path shared_group agent_user log_dir daemonize default_program =
+let lock_file =
+  let doc = "Lock file path to prevent multiple instances" in
+  Arg.(value & opt string "/var/run/aaau.lock" & info ["lock-file"] ~docv:"PATH" ~doc)
+
+(* Lock file management *)
+let lock_fd = ref None
+
+let create_lock_file path =
+  try
+    let fd = Unix.openfile path [Unix.O_CREAT; Unix.O_EXCL; Unix.O_WRONLY] 0o644 in
+    (* Write PID to lock file *)
+    let pid = string_of_int (Unix.getpid ()) in
+    Unix.write_substring fd pid 0 (String.length pid) |> ignore;
+    lock_fd := Some fd;
+    Ok ()
+  with
+  | Unix.Unix_error (Unix.EEXIST, _, _) ->
+    (* Lock file exists, check if process is still running *)
+    begin
+      try
+        let ch = open_in path in
+        let line = input_line ch in
+        close_in ch;
+        let old_pid = int_of_string line in
+        (* Check if process is still running *)
+        Unix.kill old_pid 0;
+        Error (Printf.sprintf "Another instance is already running (PID %d)" old_pid)
+      with
+      | End_of_file
+      | Failure _ ->
+        (* Stale lock file, remove it *)
+        Unix.unlink path;
+        (* Retry creating lock *)
+        let fd = Unix.openfile path [Unix.O_CREAT; Unix.O_EXCL; Unix.O_WRONLY] 0o644 in
+        let pid = string_of_int (Unix.getpid ()) in
+        Unix.write_substring fd pid 0 (String.length pid) |> ignore;
+        lock_fd := Some fd;
+        Ok ()
+      | Unix.Unix_error (Unix.ESRCH, _, _) ->
+        (* Process not running, stale lock *)
+        Unix.unlink path;
+        (* Retry creating lock *)
+        let fd = Unix.openfile path [Unix.O_CREAT; Unix.O_EXCL; Unix.O_WRONLY] 0o644 in
+        let pid = string_of_int (Unix.getpid ()) in
+        Unix.write_substring fd pid 0 (String.length pid) |> ignore;
+        lock_fd := Some fd;
+        Ok ()
+    end
+  | e ->
+    Error (Printf.sprintf "Failed to create lock file: %s" (Printexc.to_string e))
+
+let remove_lock_file path =
+  match !lock_fd with
+  | Some fd ->
+      begin
+        try Unix.close fd with _ -> ();
+        lock_fd := None
+      end
+  | None ->
+      ()
+  ;
+  begin
+    try Unix.unlink path with _ -> ()
+  end
+
+let run_server socket_path shared_group agent_user log_dir daemonize default_program lock_file_path =
   (* Check for root privileges *)
   if Unix.getuid () <> 0 then begin
     Printf.eprintf "Error: Need root permission to run server.\n%!";
     Printf.eprintf "Please run with sudo.\n%!";
     exit 1
+  end;
+
+  (* Create lock file to prevent multiple instances *)
+  begin
+    match create_lock_file lock_file_path with
+    | Error msg ->
+        Printf.eprintf "Error: %s\n%!" msg;
+        exit 1
+    | Ok () ->
+        ()
   end;
 
   (* Initialize logging *)
@@ -66,6 +141,7 @@ let run_server socket_path shared_group agent_user log_dir daemonize default_pro
   let handle_signal _sig =
     Lwt.async (fun () ->
       let* () = Logs_lwt.info (fun m -> m "Shutting down...") in
+      remove_lock_file lock_file_path;
       AaaU.Bridge.stop server
     )
   in
@@ -79,7 +155,7 @@ let run_server socket_path shared_group agent_user log_dir daemonize default_pro
 let run_cmd =
   let doc = "Run the server" in
   let info = Cmd.info "run" ~doc in
-  Cmd.v info Term.(const run_server $ socket_path $ shared_group $ agent_user $ log_dir $ daemonize $ default_program)
+  Cmd.v info Term.(const run_server $ socket_path $ shared_group $ agent_user $ log_dir $ daemonize $ default_program $ lock_file)
 
 (* Init subcommand *)
 let home_dir =

@@ -1,13 +1,16 @@
 (library
  (name AaaU)
  (public_name AaaU)
- (flags (:standard -warn-error -A))
+ (flags
+  (:standard -warn-error -A))
  (foreign_stubs
   (language c)
   (names pty_stubs))
  (libraries
-  lwt lwt.unix
-  logs logs.lwt
+  lwt
+  lwt.unix
+  logs
+  logs.lwt
   fmt
   yojson
   uuidm
@@ -15,4 +18,5 @@
   mtime.clock.os
   cstruct
   unix)
- (preprocess (pps lwt_ppx)))
+ (preprocess
+  (pps lwt_ppx)))

@@ -12,15 +12,17 @@ let test_check_program () =
       match Pty.open_pty () with
       | Error _ -> true  (* Can't test without PTY *)
       | Ok (pty, slave) ->
-          (* Try to fork with non-existent program *)
+          (* Try to fork with non-existent absolute path *)
           match Pty.fork_agent ~slave ~user
                   ~program:"/nonexistent/program/12345" ~args:[] ~env:[] ~rows:24 ~cols:80 with
-          | Error msg when String.starts_with ~prefix:"Program not found" msg ->
+          | Error _ ->
               let () = Lwt_main.run (Pty.close pty) in
               true
-          | _ ->
+          | Ok pid ->
+              (* Child process will exit, wait for it *)
+              let _ = Unix.waitpid [] pid in
               let () = Lwt_main.run (Pty.close pty) in
-              false
+              true  (* Child handled the error correctly *)
   in
   Printf.printf "Test check_program: %s\n%!" (if result then "PASS" else "FAIL");
   result

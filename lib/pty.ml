@@ -8,6 +8,7 @@ external ptsname : int -> string = "aaau_ptsname"
 external set_winsize : int -> int -> int -> unit = "aaau_set_winsize"
 external get_winsize : int -> (int * int) = "aaau_get_winsize"
 external set_ctty : int -> unit = "aaau_set_ctty"
+external set_pgrp : int -> int -> unit = "aaau_set_pgrp"
 
 type t = {
   master_fd : Unix.file_descr;
@@ -109,30 +110,37 @@ let set_controlling_terminal fd =
     set_ctty fd_int
   with _ -> ()  (* Default fallback *)
 
+(* Set foreground process group *)
+let set_foreground_process_group fd pid =
+  try
+    let fd_int = fd_to_int fd in
+    set_pgrp fd_int pid
+  with _ -> ()  (* Default fallback *)
+
 (* Configure PTY slave for interactive use *)
 let configure_slave fd =
   try
     let attr = Unix.tcgetattr fd in
     let new_attr = {
       attr with
-      (* Input modes: disable special processing *)
+      (* Input modes: enable CR->NL, enable signal chars *)
       c_ignbrk = false;
-      c_brkint = false;
+      c_brkint = true;    (* Generate SIGINT on break *)
       c_ignpar = false;
       c_parmrk = false;
       c_inpck = false;
       c_istrip = false;
       c_inlcr = false;
       c_igncr = false;
-      c_icrnl = false;
-      c_ixon = false;
+      c_icrnl = true;     (* Convert CR to NL *)
+      c_ixon = true;      (* Enable XON/XOFF *)
       c_ixoff = false;
-      (* Output modes: disable processing *)
-      c_opost = false;
-      (* Local modes: raw mode but WITH echo enabled *)
+      (* Output modes: enable processing *)
+      c_opost = true;
+      (* Local modes: non-canonical with signals *)
       c_isig = true;      (* Enable signal chars like Ctrl-C *)
-      c_icanon = true;    (* Enable canonical mode for line editing *)
-      c_echo = true;      (* ENABLE echo so user sees what they type *)
+      c_icanon = false;   (* Non-canonical for interactive apps *)
+      c_echo = true;      (* Enable echo *)
       c_echoe = true;     (* Echo erase character as backspace *)
       c_echok = true;     (* Echo NL after kill *)
       c_echonl = false;
@@ -146,10 +154,15 @@ let configure_slave fd =
 (* Fork and switch to user *)
 let fork_agent ~slave ~user ~program ~args ~env ~rows ~cols =
   try
-    (* Check if program exists using shell's command -v (works for PATH lookup and full paths) *)
-    let status = Sys.command (Printf.sprintf "command -v %s >/dev/null 2>&1" program) in
-    if status <> 0 then
-      raise (Failure (Printf.sprintf "Program not found: %s" program));
+    (* Check absolute paths only - relative commands will be resolved by login shell *)
+    if String.starts_with ~prefix:"/" program then begin
+      if not (Sys.file_exists program) then
+        raise (Failure (Printf.sprintf "Program not found: %s" program));
+      (* Check if executable using Unix.access *)
+      try Unix.access program [Unix.X_OK]
+      with Unix.Unix_error _ ->
+        raise (Failure (Printf.sprintf "Program not executable: %s" program))
+    end;
     
     let slave_fd = Unix.openfile slave [Unix.O_RDWR] 0 in
 
@@ -170,7 +183,10 @@ let fork_agent ~slave ~user ~program ~args ~env ~rows ~cols =
         (* Set the slave as the controlling terminal for this session *)
         set_controlling_terminal slave_ctl;
 
-        (* Configure PTY slave as raw terminal *)
+        (* Set foreground process group so signals are delivered correctly *)
+        set_foreground_process_group slave_ctl (Unix.getpid ());
+
+        (* Configure PTY slave for interactive use *)
         configure_slave slave_ctl;
 
         (* Duplicate to standard IO *)
@@ -207,8 +223,9 @@ let fork_agent ~slave ~user ~program ~args ~env ~rows ~cols =
         (* Change directory *)
         Unix.chdir user_entry.Unix.pw_dir;
 
-        (* Execute program *)
-        Unix.execvp program (Array.of_list (program :: args))
+        (* Execute program through interactive login shell to get user's full environment *)
+        let shell_cmd = Printf.sprintf "exec %s" (String.concat " " (program :: args)) in
+        Unix.execvp "/bin/bash" [|"/bin/bash"; "-i"; "-l"; "-c"; shell_cmd|]
 
       with e ->
         Printf.eprintf "Agent startup failed: %s\n%!" (Printexc.to_string e);
@@ -226,12 +243,14 @@ let fork_agent ~slave ~user ~program ~args ~env ~rows ~cols =
     Error msg
   | e -> Error (Printf.sprintf "Fork error: %s" (Printexc.to_string e))
 
-(* Get or create Lwt file descriptor with non-blocking mode *)
+(* Get or create Lwt file descriptor.
+   Master FD is already in non-blocking mode (set in open_pty),
+   so we use ~set_flags:false to preserve it and avoid worker thread pool. *)
 let get_lwt_fd pty =
   match pty.lwt_fd with
   | Some fd -> fd
   | None ->
-      let fd = Lwt_unix.of_unix_file_descr ~set_flags:true pty.master_fd in
+      let fd = Lwt_unix.of_unix_file_descr ~set_flags:false pty.master_fd in
       pty.lwt_fd <- Some fd;
       fd
 
@@ -244,8 +263,11 @@ let write pty buf off len =
 
 let close pty =
   match pty.lwt_fd with
-  | Some fd -> Lwt_unix.close fd
-  | None -> 
-      (* Fallback to Unix close *)
-      Unix.close pty.master_fd;
-      Lwt.return_unit
+  | Some fd ->
+      (* Mark as closed by setting lwt_fd to None *)
+      pty.lwt_fd <- None;
+      Lwt_unix.close fd
+  | None ->
+      (* Already closed or not opened as Lwt fd, close master_fd via Lwt *)
+      let lwt_fd = Lwt_unix.of_unix_file_descr ~set_flags:false pty.master_fd in
+      Lwt_unix.close lwt_fd

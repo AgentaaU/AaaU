@@ -171,3 +171,19 @@ CAMLprim value aaau_get_winsize(value v_fd)
     
     CAMLreturn(v_result);
 }
+
+/* Set foreground process group using tcsetpgrp */
+CAMLprim value aaau_set_pgrp(value v_fd, value v_pid)
+{
+    CAMLparam2(v_fd, v_pid);
+    int fd = Int_val(v_fd);
+    pid_t pid = (pid_t)Int_val(v_pid);
+    int ret;
+    
+    ret = tcsetpgrp(fd, pid);
+    if (ret == -1) {
+        uerror("tcsetpgrp", Nothing);
+    }
+    
+    CAMLreturn(Val_unit);
+}

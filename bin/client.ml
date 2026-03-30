@@ -65,22 +65,30 @@ let rec run_client_lwt socket_path session_id readonly program =
   let handshake_nl = handshake ^ "\n" in
   let* _ = Lwt_unix.write_string socket handshake_nl 0 (String.length handshake_nl) in
 
-  (* Read response *)
+  (* Read response with timeout *)
   let buf = Bytes.create 1024 in
-  let* n = Lwt_unix.read socket buf 0 1024 in
-  let response = Bytes.sub_string buf 0 n in
-  
-  if String.starts_with ~prefix:"SESSION:" response then begin
-    (* Connected successfully, enter interactive mode *)
-    if readonly then
-      run_readonly socket
-    else
-      run_interactive socket
-  end else begin
-    (* Print error and exit *)
-    Printf.eprintf "Server error: %s\n%!" response;
+  let* result = Lwt.pick [
+    (let* n = Lwt_unix.read socket buf 0 1024 in
+     Lwt.return (Some (Bytes.sub_string buf 0 n)));
+    (let* () = Lwt_unix.sleep 5.0 in
+     Lwt.return None);
+  ] in
+  match result with
+  | None ->
+    Printf.eprintf "Server handshake timeout\n%!";
     Lwt.return_unit
-  end
+  | Some response ->
+    if String.starts_with ~prefix:"SESSION:" response then begin
+      (* Connected successfully, enter interactive mode *)
+      if readonly then
+        run_readonly socket
+      else
+        run_interactive socket
+    end else begin
+      (* Print error and exit *)
+      Printf.eprintf "Server error: %s\n%!" response;
+      Lwt.return_unit
+    end
 
 and run_readonly socket =
   (* Read-only mode: only receive, don't send *)
@@ -178,24 +186,24 @@ and run_interactive socket =
       else
         (* Read available input - escape sequences need to be kept together *)
         let buf = Bytes.create 256 in
-        let* n = Lwt_unix.read stdin_lwt buf 0 256 in
-        if n = 0 then begin
-          signal_exit ();
-          Lwt.return_unit
-        end else
-          let data = Bytes.sub_string buf 0 n in
-          (* Pass raw bytes through - don't translate \r to \n *)
-          let encoded = AaaU.Protocol.encode_client (AaaU.Protocol.Input data) in
-          (* Frame the message with length prefix for proper demarcation *)
-          let framed = AaaU.Protocol.frame_message encoded in
-          Lwt.catch
-            (fun () ->
+        Lwt.catch
+          (fun () ->
+            let* n = Lwt_unix.read stdin_lwt buf 0 256 in
+            if n = 0 then begin
+              signal_exit ();
+              Lwt.return_unit
+            end else
+              let data = Bytes.sub_string buf 0 n in
+              (* Pass raw bytes through - don't translate \r to \n *)
+              let encoded = AaaU.Protocol.encode_client (AaaU.Protocol.Input data) in
+              (* Frame the message with length prefix for proper demarcation *)
+              let framed = AaaU.Protocol.frame_message encoded in
               let* () = write_all socket framed in
               loop ())
-            (fun _ ->
-              (* Socket write failed *)
-              signal_exit ();
-              Lwt.return_unit)
+          (fun _ ->
+            (* Socket write failed or closed - agent may have exited *)
+            signal_exit ();
+            Lwt.return_unit)
     in
     loop ()
   in
@@ -218,6 +226,9 @@ and run_interactive socket =
           (fun () ->
             let* n = Lwt_unix.read socket buf 0 4096 in
             if n = 0 then begin
+              signal_exit ();
+              (* Agent exited - give a moment for final output then exit *)
+              let* () = Lwt_unix.sleep 0.1 in
               signal_exit ();
               Lwt.return_unit
             end else
@@ -266,22 +277,28 @@ and run_interactive socket =
     Sys.set_signal Sys.sigwinch Signal_default
   in
 
-  (* Run all threads concurrently and wait for exit signal *)
-  let main_thread =
-    Lwt.join [
-      stdin_to_socket ();
-      socket_to_stdout ();
-      resize_handler ()
-    ]
-  in
-  
-  try
-    let* () = main_thread in
+  (* Run all threads concurrently *)
+  let _ = stdin_to_socket () in
+  let _ = socket_to_stdout () in
+  let _ = resize_handler () in
+
+  (* Wait for exit signal, then cleanup *)
+  let run_all () =
+    (* Wait for exit signal from any thread *)
+    let* () = Lwt_condition.wait exit_cond in
+    (* Small delay to ensure all output is written *)
+    let* () = Lwt_unix.sleep 0.05 in
+    (* Close socket to unblock any pending reads *)
+    let* () = Lwt.catch (fun () -> Lwt_unix.close socket) (fun _ -> Lwt.return_unit) in
     cleanup ();
     Lwt.return_unit
-  with e ->
-    cleanup ();
-    raise e
+  in
+
+  Lwt.catch
+    (fun () -> run_all ())
+    (fun e ->
+      cleanup ();
+      Lwt.fail e)
 
 let cmd =
   let doc = "Agent-as-User Bridge Client" in

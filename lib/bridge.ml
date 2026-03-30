@@ -153,65 +153,79 @@ let handle_client t client_fd addr =
     Lwt_unix.close client_fd
 
   | Ok user_info ->
-    (* Handshake *)
-    let* handshake = handle_handshake t client_fd in
-    match handshake with
-    | Error e ->
-      let* _ = Lwt_unix.write_string client_fd (e ^ "\n") 0 (String.length e + 1) in
-      Lwt_unix.close client_fd
+    (* Handshake - wrap in exception handling *)
+    let* () = Lwt.try_bind
+      (fun () ->
+        let* handshake_result = handle_handshake t client_fd in
+        match handshake_result with
+        | Error e ->
+          let* _ = Lwt_unix.write_string client_fd (e ^ "\n") 0 (String.length e + 1) in
+          Lwt_unix.close client_fd
+        | Ok (`Existing session | `New session as handshake_result') ->
+          let session =
+            match handshake_result' with
+            | `Existing s -> s
+            | `New s -> s
+          in
 
-    | Ok (`Existing session | `New session as result) ->
-      let session =
-        match result with
-        | `Existing s -> s
-        | `New s -> s
-      in
+          (* Add client *)
+          let* client_result =
+            Session.add_client session ~socket:client_fd ~addr ~user_info
+          in
+          match client_result with
+          | Error e ->
+            let* _ = Lwt_unix.write_string client_fd (e ^ "\n") 0 (String.length e + 1) in
+            Lwt_unix.close client_fd
 
-      (* Add client *)
-      let* client_result =
-        Session.add_client session ~socket:client_fd ~addr ~user_info
-      in
-      match client_result with
-      | Error e ->
-        let* _ = Lwt_unix.write_string client_fd (e ^ "\n") 0 (String.length e + 1) in
-        Lwt_unix.close client_fd
+          | Ok client ->
+            (* Main loop: forward client input with framing *)
+            let recv_buffer = ref "" in
+            let rec loop () =
+              if not t.running then
+                Lwt.return_unit
+              else
+                let buf = Bytes.create 4096 in
+                let* n =
+                  Lwt.catch
+                    (fun () -> Lwt_unix.read client_fd buf 0 4096)
+                    (fun _ -> Lwt.return 0)
+                in
 
-      | Ok client ->
-        (* Main loop: forward client input with framing *)
-        let recv_buffer = ref "" in
-        let rec loop () =
-          if not t.running then
-            Lwt.return_unit
-          else
-            let buf = Bytes.create 4096 in
-            let* n =
-              Lwt.catch
-                (fun () -> Lwt_unix.read client_fd buf 0 4096)
-                (fun _ -> Lwt.return 0)
+                if n = 0 then (
+                  (* Client disconnected *)
+                  let* () = Session.remove_client session client in
+                  Lwt.return_unit
+                ) else (
+                  let data = Bytes.sub_string buf 0 n in
+                  recv_buffer := !recv_buffer ^ data;
+
+                  (* Parse framed messages *)
+                  let rec parse_messages () =
+                    match Protocol.try_parse_framed !recv_buffer with
+                    | None -> Lwt.return_unit
+                    | Some (msg, remaining) ->
+                      recv_buffer := remaining;
+                      let* () = Session.handle_client_input session ~client ~data:msg in
+                      parse_messages ()
+                  in
+                  let* () = parse_messages () in
+                  loop ()
+                )
             in
 
-            if n = 0 then
-              (* Client disconnected *)
-              Session.remove_client session client
-            else
-              let data = Bytes.sub_string buf 0 n in
-              recv_buffer := !recv_buffer ^ data;
-              
-              (* Parse framed messages *)
-              let rec parse_messages () =
-                match Protocol.try_parse_framed !recv_buffer with
-                | None -> Lwt.return_unit
-                | Some (msg, remaining) ->
-                  recv_buffer := remaining;
-                  let* () = Session.handle_client_input session ~client ~data:msg in
-                  parse_messages ()
-              in
-              let* () = parse_messages () in
-              loop ()
-        in
-
-        let* () = loop () in
-        Lwt_unix.close client_fd
+            let* () = loop () in
+            (* Socket may already be closed by session cleanup *)
+            let* () = Lwt.catch (fun () -> Lwt_unix.close client_fd) (fun _ -> Lwt.return_unit) in
+            Lwt.return_unit
+      )
+      (fun () -> Lwt.return_unit)
+      (fun exn ->
+        let error_msg = Printf.sprintf "Handshake error: %s" (Printexc.to_string exn) in
+        let* () = Logs_lwt.err (fun m -> m "%s" error_msg) in
+        let* _ = Lwt_unix.write_string client_fd (error_msg ^ "\n") 0 (String.length error_msg + 1) in
+        Lwt_unix.close client_fd)
+    in
+    Lwt.return_unit
 
 let rec accept_loop t =
   if not t.running then
