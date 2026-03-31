@@ -42,6 +42,20 @@ let get_terminal_size () =
 (* Global reference for socket to send resize events *)
 let socket_ref = ref None
 
+let split_handshake_response response =
+  match String.index_opt response '\n' with
+  | None -> (String.trim response, "")
+  | Some idx ->
+    let line = String.sub response 0 idx |> String.trim in
+    let remaining_len = String.length response - idx - 1 in
+    let remaining =
+      if remaining_len > 0 then
+        String.sub response (idx + 1) remaining_len
+      else
+        ""
+    in
+    (line, remaining)
+
 let rec run_client_lwt socket_path session_id readonly program =
   (* Connect to server *)
   let socket = Lwt_unix.socket Unix.PF_UNIX Unix.SOCK_STREAM 0 in
@@ -78,20 +92,26 @@ let rec run_client_lwt socket_path session_id readonly program =
     Printf.eprintf "Server handshake timeout\n%!";
     Lwt.return_unit
   | Some response ->
-    if String.starts_with ~prefix:"SESSION:" response then begin
+    let handshake_line, initial_output = split_handshake_response response in
+    if String.starts_with ~prefix:"SESSION:" handshake_line then begin
       (* Connected successfully, enter interactive mode *)
       if readonly then
-        run_readonly socket
+        run_readonly socket ~initial_output
       else
-        run_interactive socket
+        run_interactive socket ~initial_output
     end else begin
       (* Print error and exit *)
-      Printf.eprintf "Server error: %s\n%!" response;
+      Printf.eprintf "Server error: %s\n%!" handshake_line;
       Lwt.return_unit
     end
 
-and run_readonly socket =
+and run_readonly socket ~initial_output =
   (* Read-only mode: only receive, don't send *)
+  let print_output data =
+    if data <> "" && not (AaaU.Protocol.is_control data) then
+      print_string data
+  in
+  print_output initial_output;
   let rec loop () =
     let buf = Bytes.create 4096 in
     let* n = Lwt_unix.read socket buf 0 4096 in
@@ -99,13 +119,12 @@ and run_readonly socket =
       Lwt.return_unit
     else
       let data = Bytes.sub_string buf 0 n in
-      if not (AaaU.Protocol.is_control data) then
-        print_string data;
+      print_output data;
       loop ()
   in
   loop ()
 
-and run_interactive socket =
+and run_interactive socket ~initial_output =
   (* Save original terminal attributes *)
   let old_tty = Unix.tcgetattr Unix.stdin in
   
@@ -253,6 +272,12 @@ and run_interactive socket =
           (fun _ ->
             signal_exit ();
             Lwt.return_unit)
+    in
+    let* () =
+      if initial_output <> "" && not (AaaU.Protocol.is_control initial_output) then
+        write_stdout initial_output 0 (String.length initial_output)
+      else
+        Lwt.return_unit
     in
     loop ()
   in

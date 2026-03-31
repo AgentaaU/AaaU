@@ -51,6 +51,10 @@ val get_id : t -> string
 val get_clients : t -> client list
 val get_agent_pid : t -> int option
 
+val compact_output_buffer : Buffer.t -> last_sent_pos:int -> int
+(** Compact the output history buffer when it grows too large.
+    Returns the adjusted last_sent_pos for the compacted buffer. *)
+
 module Lwt_queue : sig
   type 'a t
   val create : unit -> 'a t
