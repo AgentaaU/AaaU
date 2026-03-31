@@ -81,7 +81,10 @@ let handle_handshake t client_fd =
       Lwt_mutex.with_lock t.sessions_lock (fun () ->
         match Hashtbl.find_opt t.sessions session_id with
         | None -> Lwt.return_error (Printf.sprintf "Session %s not found" session_id)
-        | Some session -> Lwt.return_ok (`Existing session)
+        | Some session ->
+          let response = Printf.sprintf "SESSION:%s\n" session_id in
+          let* _ = Lwt_unix.write_string client_fd response 0 (String.length response) in
+          Lwt.return_ok (`Existing session)
       )
     else if String.starts_with ~prefix:"NEW" msg then
       (* Parse "NEW:rows:cols" or "NEW:program:rows:cols" or "NEW:program:arg1:arg2:...:rows:cols" *)

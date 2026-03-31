@@ -69,3 +69,7 @@
 (test
  (name test_agent_exit_client_exit)
  (libraries AaaU))
+
+(test
+ (name test_output_buffer_compaction)
+ (libraries AaaU))

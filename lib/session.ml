@@ -75,6 +75,17 @@ let get_id s = s.session_id
 let get_clients s = Hashtbl.fold (fun _ c acc -> c :: acc) s.clients []
 let get_agent_pid s = Some s.agent_pid
 
+let compact_output_buffer buffer ~last_sent_pos =
+  if Buffer.length buffer <= 100000 then
+    last_sent_pos
+  else
+    let content = Buffer.contents buffer in
+    let dropped = String.length content / 2 in
+    let keep = String.sub content dropped (String.length content - dropped) in
+    Buffer.reset buffer;
+    Buffer.add_string buffer keep;
+    max 0 (last_sent_pos - dropped)
+
 (* Read agent output from PTY *)
 let rec pty_read_loop (t : session) =
   if not t.running then
@@ -128,14 +139,7 @@ let rec pty_read_loop (t : session) =
 
       (* Save to buffer *)
       Buffer.add_string t.output_buffer data;
-      let () =
-        if Buffer.length t.output_buffer > 100000 then
-          (* Keep the latter half *)
-          let content = Buffer.contents t.output_buffer in
-          let keep = String.sub content (String.length content / 2) (String.length content / 2) in
-          Buffer.reset t.output_buffer;
-          Buffer.add_string t.output_buffer keep
-      in
+      t.last_sent_pos <- compact_output_buffer t.output_buffer ~last_sent_pos:t.last_sent_pos;
 
       (* Notify broadcast immediately for every output *)
       Lwt_condition.broadcast t.output_cond ();
@@ -157,20 +161,19 @@ let rec pty_write_loop (t : session) =
       if remaining = 0 then
         Lwt.return_unit
       else
-        Lwt.pick [
-          (* Try to write *)
-          (let* written = Pty.write t.pty data offset remaining in
-           if written > 0 then
-             write_all (offset + written) (remaining - written)
-           else
-             Lwt.return_unit);
-          (* Timeout after 5 seconds - PTY buffer full, agent may be stuck *)
-          (let* () = Lwt_unix.sleep 5.0 in
-           let* () = Logs_lwt.warn (fun m -> m "PTY write timeout - agent may be stuck") in
-           Lwt.return_unit);
-        ]
+        let* written = Pty.write t.pty data offset remaining in
+        if written > 0 then
+          write_all (offset + written) (remaining - written)
+        else
+          Lwt.return_unit
     in
-    let* () = write_all 0 len in
+    let* () =
+      Lwt.catch
+        (fun () -> write_all 0 len)
+        (fun e ->
+          let* () = Logs_lwt.warn (fun m -> m "PTY write failed: %s" (Printexc.to_string e)) in
+          Lwt.return_unit)
+    in
     pty_write_loop t
 
 (* Broadcast output to all clients - with timeout to prevent blocking *)
