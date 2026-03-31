@@ -198,7 +198,12 @@ and run_interactive socket =
               let encoded = AaaU.Protocol.encode_client (AaaU.Protocol.Input data) in
               (* Frame the message with length prefix for proper demarcation *)
               let framed = AaaU.Protocol.frame_message encoded in
-              let* () = write_all socket framed in
+              (* Write with timeout to prevent blocking if server is slow *)
+              let* () = Lwt.pick [
+                (let* () = write_all socket framed in Lwt.return_unit);
+                (let* () = Lwt_unix.sleep 5.0 in
+                 Lwt.return_unit);
+              ] in
               loop ())
           (fun _ ->
             (* Socket write failed or closed - agent may have exited *)
@@ -210,13 +215,17 @@ and run_interactive socket =
 
   (* socket → stdout: Read from server and write to terminal *)
   let socket_to_stdout () =
-    (* Ensure all data is written to stdout using raw Unix writes *)
+    (* Use Lwt writes to avoid blocking the event loop *)
+    (* Convert Unix.stdout to Lwt file descriptor *)
+    let stdout_lwt = Lwt_unix.of_unix_file_descr ~set_flags:false Unix.stdout in
     let rec write_stdout data offset remaining =
-      if remaining = 0 then ()
+      if remaining = 0 then Lwt.return_unit
       else
-        let written = Unix.write_substring Unix.stdout data offset remaining in
+        let* written = Lwt_unix.write_string stdout_lwt data offset remaining in
         if written > 0 then
           write_stdout data (offset + written) (remaining - written)
+        else
+          Lwt.return_unit
     in
     let rec loop () =
       if !should_exit then Lwt.return_unit
@@ -234,9 +243,12 @@ and run_interactive socket =
             end else
               let data = Bytes.sub_string buf 0 n in
               (* Skip protocol control messages - they start with \x01 *)
-              if not (AaaU.Protocol.is_control data) then begin
-                write_stdout data 0 (String.length data)
-              end;
+              let* () =
+                if not (AaaU.Protocol.is_control data) then
+                  write_stdout data 0 (String.length data)
+                else
+                  Lwt.return_unit
+              in
               loop ())
           (fun _ ->
             signal_exit ();
@@ -277,10 +289,10 @@ and run_interactive socket =
     Sys.set_signal Sys.sigwinch Signal_default
   in
 
-  (* Run all threads concurrently *)
-  let _ = stdin_to_socket () in
-  let _ = socket_to_stdout () in
-  let _ = resize_handler () in
+  (* Run all threads concurrently using Lwt.async *)
+  Lwt.async (fun () -> stdin_to_socket ());
+  Lwt.async (fun () -> socket_to_stdout ());
+  Lwt.async (fun () -> resize_handler ());
 
   (* Wait for exit signal, then cleanup *)
   let run_all () =
