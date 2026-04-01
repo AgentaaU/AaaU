@@ -3,17 +3,7 @@
 open Lwt.Syntax
 open Cmdliner
 
-(* Write all data to socket, handling partial writes *)
-let rec write_all socket data =
-  let len = String.length data in
-  if len = 0 then
-    Lwt.return_unit
-  else
-    let* written = Lwt_unix.write_string socket data 0 len in
-    if written < len then
-      write_all socket (String.sub data written (len - written))
-    else
-      Lwt.return_unit
+let write_all = AaaU.Client_io.write_all
 
 let socket_path =
   let doc = "Server socket path" in
@@ -42,20 +32,6 @@ let get_terminal_size () =
 (* Global reference for socket to send resize events *)
 let socket_ref = ref None
 
-let split_handshake_response response =
-  match String.index_opt response '\n' with
-  | None -> (String.trim response, "")
-  | Some idx ->
-    let line = String.sub response 0 idx |> String.trim in
-    let remaining_len = String.length response - idx - 1 in
-    let remaining =
-      if remaining_len > 0 then
-        String.sub response (idx + 1) remaining_len
-      else
-        ""
-    in
-    (line, remaining)
-
 let rec run_client_lwt socket_path session_id readonly program =
   (* Connect to server *)
   let socket = Lwt_unix.socket Unix.PF_UNIX Unix.SOCK_STREAM 0 in
@@ -79,20 +55,12 @@ let rec run_client_lwt socket_path session_id readonly program =
   let handshake_nl = handshake ^ "\n" in
   let* _ = Lwt_unix.write_string socket handshake_nl 0 (String.length handshake_nl) in
 
-  (* Read response with timeout *)
-  let buf = Bytes.create 1024 in
-  let* result = Lwt.pick [
-    (let* n = Lwt_unix.read socket buf 0 1024 in
-     Lwt.return (Some (Bytes.sub_string buf 0 n)));
-    (let* () = Lwt_unix.sleep 5.0 in
-     Lwt.return None);
-  ] in
-  match result with
-  | None ->
+  let* handshake_response = AaaU.Client_io.read_handshake_response socket in
+  match handshake_response with
+  | AaaU.Client_io.Timeout ->
     Printf.eprintf "Server handshake timeout\n%!";
     Lwt.return_unit
-  | Some response ->
-    let handshake_line, initial_output = split_handshake_response response in
+  | AaaU.Client_io.Response (handshake_line, initial_output) ->
     if String.starts_with ~prefix:"SESSION:" handshake_line then begin
       (* Connected successfully, enter interactive mode *)
       if readonly then

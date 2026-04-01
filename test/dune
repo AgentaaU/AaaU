@@ -1,75 +1,99 @@
 (test
  (name test_pty_open_close)
+ (modules test_pty_open_close)
  (libraries AaaU))
 
 (test
  (name test_pty_error_handling)
+ (modules test_pty_error_handling)
  (libraries AaaU))
 
 (test
  (name test_pty_no_exceptions)
+ (modules test_pty_no_exceptions)
  (libraries AaaU))
 
 (test
  (name test_escape_sequence_passthrough)
+ (modules test_escape_sequence_passthrough)
  (libraries AaaU))
 
 (test
  (name test_terminal_size)
+ (modules test_terminal_size)
  (libraries AaaU))
 
 (test
  (name test_pty_resize)
+ (modules test_pty_resize)
  (libraries AaaU))
 
 (test
  (name test_controlling_terminal)
+ (modules test_controlling_terminal)
  (libraries AaaU))
 
 (test
  (name test_concurrent_input)
+ (modules test_concurrent_input)
  (libraries AaaU))
 
 (test
  (name test_process_group)
+ (modules test_process_group)
  (libraries AaaU))
 
 (test
  (name test_agent_cleanup)
+ (modules test_agent_cleanup)
  (libraries AaaU))
 
 (test
  (name test_check_program)
+ (modules test_check_program)
  (libraries AaaU))
 
 (test
  (name test_check_program_command)
+ (modules test_check_program_command)
  (libraries AaaU))
 
 (test
  (name test_fork_agent_terminal_size)
+ (modules test_fork_agent_terminal_size)
  (libraries AaaU))
 
 (test
  (name test_terminal_echo)
+ (modules test_terminal_echo)
  (libraries AaaU))
 
 (test
  (name test_agent_exit)
+ (modules test_agent_exit)
  (libraries AaaU))
 
 (test
  (name test_lock_file)
+ (modules test_lock_file)
  (libraries AaaU))
 
 (test
  (name test_client_disconnect)
+ (modules test_client_disconnect)
  (libraries AaaU))
 
 (test
  (name test_agent_exit_client_exit)
+ (modules test_agent_exit_client_exit)
  (libraries AaaU))
 
 (test
  (name test_output_buffer_compaction)
+ (modules test_output_buffer_compaction)
+ (libraries AaaU))
+
+(test
+ (name test_client_handshake_initial_output)
+ (modules test_client_handshake_initial_output)
  (libraries AaaU))
