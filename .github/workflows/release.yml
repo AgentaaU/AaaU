@@ -40,6 +40,7 @@ jobs:
       - name: Prepare release artifacts
         run: |
           mkdir -p release
+          archive_files=(aaau-server aaau)
           cp _build/default/bin/server.exe release/aaau-server
           cp _build/default/bin/client.exe release/aaau
           # Include systemd service and install script for Linux
@@ -47,10 +48,12 @@ jobs:
             cp contrib/aaau-server.service release/
             cp contrib/install.sh release/
             chmod +x release/install.sh
-            tar -czvf ${{ matrix.artifact_name }}.tar.gz aaau-server aaau aaau-server.service install.sh
-          else
-            tar -czvf ${{ matrix.artifact_name }}.tar.gz aaau-server aaau
+            archive_files+=(aaau-server.service install.sh)
           fi
+          (
+            cd release
+            tar -czvf ${{ matrix.artifact_name }}.tar.gz "${archive_files[@]}"
+          )
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
