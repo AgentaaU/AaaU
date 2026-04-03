@@ -1,7 +1,8 @@
 (test
  (name test_pty_open_close)
  (modules test_pty_open_close)
- (libraries AaaU))
+ (libraries AaaU)
+ (enabled_if (= %{system} "linux")))
 
 (test
  (name test_pty_error_handling)
@@ -16,7 +17,8 @@
 (test
  (name test_escape_sequence_passthrough)
  (modules test_escape_sequence_passthrough)
- (libraries AaaU))
+ (libraries AaaU)
+ (enabled_if (= %{system} "linux")))
 
 (test
  (name test_terminal_size)
@@ -26,12 +28,14 @@
 (test
  (name test_pty_resize)
  (modules test_pty_resize)
- (libraries AaaU))
+ (libraries AaaU)
+ (enabled_if (= %{system} "linux")))
 
 (test
  (name test_controlling_terminal)
  (modules test_controlling_terminal)
- (libraries AaaU))
+ (libraries AaaU)
+ (enabled_if (= %{system} "linux")))
 
 (test
  (name test_concurrent_input)
@@ -46,7 +50,8 @@
 (test
  (name test_agent_cleanup)
  (modules test_agent_cleanup)
- (libraries AaaU))
+ (libraries AaaU)
+ (enabled_if (= %{system} "linux")))
 
 (test
  (name test_check_program)
@@ -61,7 +66,8 @@
 (test
  (name test_fork_agent_terminal_size)
  (modules test_fork_agent_terminal_size)
- (libraries AaaU))
+ (libraries AaaU)
+ (enabled_if (= %{system} "linux")))
 
 (test
  (name test_terminal_echo)
