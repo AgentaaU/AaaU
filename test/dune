@@ -102,3 +102,8 @@
  (name test_audit_log_dir)
  (modules test_audit_log_dir)
  (libraries AaaU))
+
+(test
+ (name test_auth_socket_peer)
+ (modules test_auth_socket_peer)
+ (libraries AaaU))
