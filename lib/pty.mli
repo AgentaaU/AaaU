@@ -21,6 +21,9 @@ val get_terminal_size : Unix.file_descr -> (int * int)
 val set_controlling_terminal : Unix.file_descr -> unit
 (** Set the file descriptor as the controlling terminal (TIOCSCTTY) *)
 
+val login_shell_argv : program:string -> args:string list -> string array
+(** Build a login-shell argv that preserves user argv without shell re-parsing *)
+
 val fork_agent :
   slave:slave ->
   user:string ->

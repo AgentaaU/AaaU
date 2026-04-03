@@ -117,6 +117,10 @@ let set_foreground_process_group fd pid =
     set_pgrp fd_int pid
   with _ -> ()  (* Default fallback *)
 
+let login_shell_argv ~program ~args =
+  Array.of_list
+    ("/bin/bash" :: "-i" :: "-l" :: "-c" :: "exec \"$@\"" :: "--" :: program :: args)
+
 (* Configure PTY slave for interactive use *)
 let configure_slave fd =
   try
@@ -223,9 +227,9 @@ let fork_agent ~slave ~user ~program ~args ~env ~rows ~cols =
         (* Change directory *)
         Unix.chdir user_entry.Unix.pw_dir;
 
-        (* Execute program through interactive login shell to get user's full environment *)
-        let shell_cmd = Printf.sprintf "exec %s" (String.concat " " (program :: args)) in
-        Unix.execvp "/bin/bash" [|"/bin/bash"; "-i"; "-l"; "-c"; shell_cmd|]
+        (* Preserve login-shell environment without re-parsing user argv. *)
+        let argv = login_shell_argv ~program ~args in
+        Unix.execvp "/bin/bash" argv
 
       with e ->
         Printf.eprintf "Agent startup failed: %s\n%!" (Printexc.to_string e);
