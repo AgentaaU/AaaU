@@ -54,18 +54,10 @@ let setup_socket t =
 
   Logs_lwt.info (fun m -> m "Server listening on %s" t.socket_path)
 
-let authenticate_client _ _ =
-  (* Socket permissions (0660, root:agent) already enforce that only users
-     in the 'agent' group can connect. If we get here, user is authorized. *)
-  let user_info = {
-    Auth.username = "client";
-    uid = 1000;
-    gid = 0;
-    permission = Auth.Interactive;
-  } in
-  Lwt.return (Ok user_info)
+let authenticate_client t client_fd =
+  Lwt.return (Auth.authenticate_socket (Lwt_unix.unix_file_descr client_fd) ~shared_group:t.shared_group)
 
-let handle_handshake t client_fd =
+let handle_handshake t client_fd user_info =
   (* Read handshake message *)
   let buf = Bytes.create 1024 in
   let* n = Lwt_unix.read client_fd buf 0 1024 in
@@ -125,7 +117,7 @@ let handle_handshake t client_fd =
           (t.default_program, t.default_args, 24, 80)
       in
       let session_id = Uuidm.v4_gen (Random.State.make_self_init ()) () |> Uuidm.to_string in
-      let* result = Session.create ~session_id ~creator:"unknown" ~agent_user:t.agent_user 
+      let* result = Session.create ~session_id ~creator:user_info.Auth.username ~agent_user:t.agent_user 
         ~program ~args ~rows ~cols ~audit:t.audit in
       match result with
       | Error e -> Lwt.return_error e
@@ -157,7 +149,7 @@ let handle_client t client_fd addr =
     (* Handshake - wrap in exception handling *)
     let* () = Lwt.try_bind
       (fun () ->
-        let* handshake_result = handle_handshake t client_fd in
+        let* handshake_result = handle_handshake t client_fd user_info in
         match handshake_result with
         | Error e ->
           let* _ = Lwt_unix.write_string client_fd (e ^ "\n") 0 (String.length e + 1) in

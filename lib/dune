@@ -5,7 +5,7 @@
   (:standard -warn-error -A))
  (foreign_stubs
   (language c)
-  (names pty_stubs))
+  (names auth_stubs pty_stubs))
  (libraries
   lwt
   lwt.unix
