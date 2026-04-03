@@ -13,6 +13,7 @@ type record = {
 }
 
 type t = {
+  log_dir : string;
   mutable buffer : record list;
   buffer_lock : Lwt_mutex.t;
   flush_cond : unit Lwt_condition.t;
@@ -23,6 +24,7 @@ let create ~log_dir =
     try Unix.mkdir log_dir 0o755 with Unix.Unix_error _ -> ()
   in
   {
+    log_dir;
     buffer = [];
     buffer_lock = Lwt_mutex.create ();
     flush_cond = Lwt_condition.create ();
@@ -59,7 +61,7 @@ let flush_to_disk t =
       let tm = Unix.localtime time in
       let date = Printf.sprintf "%04d-%02d-%02d"
         (tm.tm_year + 1900) (tm.tm_mon + 1) tm.tm_mday in
-      let log_file = Filename.concat "/var/log/aaau" ("audit-" ^ date ^ ".logl") in
+      let log_file = Filename.concat t.log_dir ("audit-" ^ date ^ ".logl") in
       let lines =
         List.map (fun r -> Yojson.Safe.to_string (record_to_json r)) records
       in
