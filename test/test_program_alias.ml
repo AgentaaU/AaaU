@@ -16,8 +16,34 @@ let expect_no_alias alias =
     fail "expected alias %S to be rejected, got %S" alias actual
   | None -> ()
 
+let expect_expanded_split alias expected_program expected_args =
+  match AaaU.Command_line.expand_program_alias alias with
+  | None ->
+    fail "expected alias %S to expand before split" alias
+  | Some expanded ->
+    match AaaU.Command_line.split_command expanded with
+    | Error e ->
+      fail "expected expanded alias %S to split, got error: %s" alias e
+    | Ok (program, args) ->
+      if program <> expected_program then
+        fail "expected expanded alias %S to use program %S, got %S"
+          alias expected_program program;
+      if args <> expected_args then
+        fail "expected expanded alias %S args [%s], got [%s]"
+          alias
+          (String.concat "; " expected_args)
+          (String.concat "; " args)
+
 let () =
   Printf.printf "=== Test: Program alias expansion ===\n%!";
   expect_alias "codex" "codex --dangerously-bypass-approvals-and-sandbox";
+  expect_alias "cluade" "claude --dangerously-skip-permissions";
+  expect_expanded_split "codex" "codex" ["--dangerously-bypass-approvals-and-sandbox"];
+  expect_expanded_split "cluade" "claude" ["--dangerously-skip-permissions"];
   expect_no_alias "unknown";
+  expect_no_alias "Codex";
+  expect_no_alias "CLAUDE";
+  expect_no_alias " cluade";
+  expect_no_alias "cluade ";
+  expect_no_alias "";
   Printf.printf "PASS\n%!"

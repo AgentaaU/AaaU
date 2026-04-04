@@ -40,6 +40,9 @@ aaau -p 'claude --dangerously-skip-permissions'
 
 # Shortcut for codex with the standard bypass flag
 aaau codex
+
+# Shortcut alias for claude with the standard skip-permissions flag
+aaau cluade
 ```
 
 ## Overview

@@ -22,7 +22,10 @@ let program =
   Arg.(value & opt (some string) None & info ["p"; "program"] ~docv:"PROGRAM" ~doc)
 
 let program_alias =
-  let aliases = ["codex", "codex"] in
+  let aliases = [
+    ("codex", "codex");
+    ("cluade", "cluade");
+  ] in
   let doc = "Shortcut alias for a predefined agent command" in
   Arg.(value & pos 0 (some (enum aliases)) None & info [] ~docv:"ALIAS" ~doc)
 
