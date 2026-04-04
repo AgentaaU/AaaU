@@ -72,5 +72,5 @@ let split_command input =
 
 let expand_program_alias = function
   | "codex" -> Some "codex --dangerously-bypass-approvals-and-sandbox"
-  | "cluade" -> Some "claude --dangerously-skip-permissions"
+  | "claude" -> Some "claude --dangerously-skip-permissions"
   | _ -> None
