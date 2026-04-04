@@ -21,6 +21,11 @@ let program =
   let doc = "Program to run as agent (e.g., kimi-cli, /bin/bash)" in
   Arg.(value & opt (some string) None & info ["p"; "program"] ~docv:"PROGRAM" ~doc)
 
+let program_alias =
+  let aliases = ["codex", "codex"] in
+  let doc = "Shortcut alias for a predefined agent command" in
+  Arg.(value & pos 0 (some (enum aliases)) None & info [] ~docv:"ALIAS" ~doc)
+
 (* Get actual terminal size using ioctl *)
 let get_terminal_size () =
   try
@@ -32,12 +37,21 @@ let get_terminal_size () =
 (* Global reference for socket to send resize events *)
 let socket_ref = ref None
 
-let rec run_client_lwt socket_path session_id readonly program =
+let rec run_client_lwt socket_path session_id readonly program program_alias =
   Sys.set_signal Sys.sigpipe Sys.Signal_ignore;
+  let requested_program =
+    match (program, program_alias) with
+    | Some _, Some _ ->
+      Error "Cannot use ALIAS together with -p/--program"
+    | Some raw, None -> Ok (Some raw)
+    | None, Some alias -> Ok (AaaU.Command_line.expand_program_alias alias)
+    | None, None -> Ok None
+  in
   let program_spec =
-    match program with
-    | None -> Ok None
-    | Some raw ->
+    match requested_program with
+    | Error e -> Error e
+    | Ok None -> Ok None
+    | Ok (Some raw) ->
       match AaaU.Command_line.split_command raw with
       | Ok (prog, args) -> Ok (Some (prog, args))
       | Error e -> Error e
@@ -332,6 +346,7 @@ and run_interactive socket ~initial_output =
 let cmd =
   let doc = "Agent-as-User Bridge Client" in
   let info = Cmd.info "aaau-client" ~version:"0.1.0" ~doc in
-  Cmd.v info Term.(const (fun a b c d -> Lwt_main.run (run_client_lwt a b c d)) $ socket_path $ session_id $ readonly $ program)
+  Cmd.v info Term.(const (fun a b c d e -> Lwt_main.run (run_client_lwt a b c d e))
+    $ socket_path $ session_id $ readonly $ program $ program_alias)
 
 let () = exit (Cmd.eval cmd)

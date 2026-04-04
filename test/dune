@@ -123,3 +123,8 @@
  (name test_command_line_split)
  (modules test_command_line_split)
  (libraries AaaU))
+
+(test
+ (name test_program_alias)
+ (modules test_program_alias)
+ (libraries AaaU))

@@ -37,6 +37,9 @@ sudo aaau-server run
 ```bash
 # Connect client and run claude in agent user environment
 aaau -p 'claude --dangerously-skip-permissions'
+
+# Shortcut for codex with the standard bypass flag
+aaau codex
 ```
 
 ## Overview

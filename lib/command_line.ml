@@ -69,3 +69,7 @@ let split_command input =
     | program :: args -> Ok (program, args)
   in
   skip_ws 0
+
+let expand_program_alias = function
+  | "codex" -> Some "codex --dangerously-bypass-approvals-and-sandbox"
+  | _ -> None
