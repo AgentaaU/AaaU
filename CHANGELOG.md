@@ -19,16 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **Unix Socket Authentication**: Peer credential authentication now uses proper C bindings for reliable `SO_PEERCRED` handling
 
----
+## [v0.3.0] - 2026-04
 
-## April 2026
-
-### Security Improvements
+### Security
 - **Process Group Termination**: Agent process groups are now killed on shutdown, preventing orphaned processes from running after session ends
 - **Secure Argument Handling**: Fixed shell re-parsing of agent arguments to prevent argument injection attacks
 - **Unix Socket Authentication**: Fixed peer credential authentication using proper C bindings for `SO_PEERCRED`
 
-### Reliability Improvements
+### Reliability
 - **Robust Handshake Reading**: Handshake reads now handle fragmented network packets correctly
 - **Lock-Free Broadcast Writes**: Avoid holding client locks during broadcast writes to reduce contention
 
@@ -36,9 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `aaau codex` shortcut for codex with standard bypass flag
 - Added `aaau claude` shortcut for claude with standard skip-permissions flag
 
----
-
-## March 2026
+## [v0.2.0] - 2026-03
 
 ### Added
 - Client program handshake parsing support
@@ -56,9 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - PTY slave permission hardening
 - Audit log directory handling
 
----
-
-## Initial Release
+## [v0.1.0] - Initial Release
 
 ### Core Features
 - Agent-as-User architecture with PTY bridge
