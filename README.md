@@ -341,17 +341,6 @@ bin/
 - Some ioctl operations require C bindings (currently simplified)
 - GPU/graphics access requires additional setup
 
-## Recent Changes
-
-### April 2026
-
-- **Process Group Termination**: Agent process groups are now killed on shutdown, preventing orphaned child/grandchild processes
-- **Robust Handshake Reading**: Handshake reads now handle fragmented network packets correctly, improving connection reliability
-- **Lock-Free Broadcast Writes**: Client locks are no longer held during broadcast writes, reducing contention
-- **Secure Argument Handling**: Agent arguments are no longer subject to shell re-parsing, preventing argument injection attacks
-- **Fixed Unix Socket Authentication**: Peer credential authentication now uses proper C bindings for reliable `SO_PEERCRED` handling
-- **Client Aliases**: Added `aaau codex` and `aaau claude` shortcuts for common agent invocations
-
 ## License
 
 MIT License - See LICENSE file
@@ -362,3 +351,5 @@ Contributions welcome! Please ensure:
 - Code follows OCaml conventions
 - Tests pass (`dune test`)
 - Documentation is updated
+
+See [CHANGELOG.md](CHANGELOG.md) for version history.
