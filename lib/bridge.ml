@@ -92,16 +92,13 @@ let parse_new_json payload =
   | _ -> Error "NEW_JSON payload must be a JSON object"
 
 let handle_handshake t client_fd user_info =
-  (* Read handshake message *)
-  let buf = Bytes.create 1024 in
-  let* n = Lwt_unix.read client_fd buf 0 1024 in
-
-  if n = 0 then
+  let* line_result = Client_io.read_line_with_remainder client_fd in
+  match line_result with
+  | Client_io.End_of_file ->
     Lwt.return_error "Connection closed"
-  else
-    let msg = Bytes.sub_string buf 0 n in
-    let msg = String.trim msg in
-
+  | Client_io.Timeout_line ->
+    Lwt.return_error "Connection timed out"
+  | Client_io.Line (msg, remaining) ->
     if String.starts_with ~prefix:"SESSION:" msg then
       let session_id = String.sub msg 8 (String.length msg - 8) in
       Lwt_mutex.with_lock t.sessions_lock (fun () ->
@@ -110,7 +107,7 @@ let handle_handshake t client_fd user_info =
         | Some session ->
           let response = Printf.sprintf "SESSION:%s\n" session_id in
           let* _ = Lwt_unix.write_string client_fd response 0 (String.length response) in
-          Lwt.return_ok (`Existing session)
+          Lwt.return_ok (`Existing (session, remaining))
       )
     else if String.starts_with ~prefix:"NEW_JSON:" msg then
       let payload = String.sub msg 9 (String.length msg - 9) in
@@ -131,7 +128,7 @@ let handle_handshake t client_fd user_info =
           in
           let response = Printf.sprintf "SESSION:%s\n" session_id in
           let* _ = Lwt_unix.write_string client_fd response 0 (String.length response) in
-          Lwt.return_ok (`New session)
+          Lwt.return_ok (`New (session, remaining))
       end
     else if String.starts_with ~prefix:"NEW" msg then
       (* Parse "NEW:rows:cols" or "NEW:program:rows:cols" or "NEW:program:arg1:arg2:...:rows:cols" *)
@@ -185,7 +182,7 @@ let handle_handshake t client_fd user_info =
         in
         let response = Printf.sprintf "SESSION:%s\n" session_id in
         let* _ = Lwt_unix.write_string client_fd response 0 (String.length response) in
-        Lwt.return_ok (`New session)
+        Lwt.return_ok (`New (session, remaining))
     else
       Lwt.return_error "Invalid handshake. Use SESSION:id or NEW"
 
@@ -210,10 +207,10 @@ let handle_client t client_fd addr =
           let* _ = Lwt_unix.write_string client_fd (e ^ "\n") 0 (String.length e + 1) in
           Lwt_unix.close client_fd
         | Ok (`Existing _ | `New _ as handshake_result') ->
-          let session =
+          let session, initial_buffer =
             match handshake_result' with
-            | `Existing s -> s
-            | `New s -> s
+            | `Existing (s, remaining) -> (s, remaining)
+            | `New (s, remaining) -> (s, remaining)
             | _ -> failwith "impossible"
           in
 
@@ -228,7 +225,15 @@ let handle_client t client_fd addr =
 
           | Ok client ->
             (* Main loop: forward client input with framing *)
-            let recv_buffer = ref "" in
+            let recv_buffer = ref initial_buffer in
+            let rec parse_messages () =
+              match Protocol.try_parse_framed !recv_buffer with
+              | None -> Lwt.return_unit
+              | Some (msg, remaining) ->
+                recv_buffer := remaining;
+                let* () = Session.handle_client_input session ~client ~data:msg in
+                parse_messages ()
+            in
             let rec loop () =
               if not t.running then
                 Lwt.return_unit
@@ -248,20 +253,12 @@ let handle_client t client_fd addr =
                   let data = Bytes.sub_string buf 0 n in
                   recv_buffer := !recv_buffer ^ data;
 
-                  (* Parse framed messages *)
-                  let rec parse_messages () =
-                    match Protocol.try_parse_framed !recv_buffer with
-                    | None -> Lwt.return_unit
-                    | Some (msg, remaining) ->
-                      recv_buffer := remaining;
-                      let* () = Session.handle_client_input session ~client ~data:msg in
-                      parse_messages ()
-                  in
                   let* () = parse_messages () in
                   loop ()
                 )
             in
 
+            let* () = parse_messages () in
             let* () = loop () in
             (* Socket may already be closed by session cleanup *)
             let* () = Lwt.catch (fun () -> Lwt_unix.close client_fd) (fun _ -> Lwt.return_unit) in
