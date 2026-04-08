@@ -46,9 +46,6 @@ let open_pty () =
     if not (String.starts_with ~prefix:"/dev/pts/" slave) then
       Error (Printf.sprintf "Invalid slave device path: %s" slave)
     else begin
-      (* Change permissions of slave device so agent user can access it *)
-      let _ = Sys.command (Printf.sprintf "chmod 666 %s 2>/dev/null || true" slave) in
-      
       (* Set master fd to non-blocking mode for Lwt *)
       Unix.set_nonblock master_fd;
       

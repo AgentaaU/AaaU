@@ -5,6 +5,12 @@
  (enabled_if (= %{system} "linux")))
 
 (test
+ (name test_pty_permissions)
+ (modules test_pty_permissions)
+ (libraries AaaU)
+ (enabled_if (= %{system} "linux")))
+
+(test
  (name test_pty_error_handling)
  (modules test_pty_error_handling)
  (libraries AaaU))
@@ -102,6 +108,11 @@
 (test
  (name test_client_handshake_initial_output)
  (modules test_client_handshake_initial_output)
+ (libraries AaaU))
+
+(test
+ (name test_handshake_line_reader)
+ (modules test_handshake_line_reader)
  (libraries AaaU))
 
 (test

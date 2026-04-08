@@ -67,6 +67,7 @@ type session = {
 
   (* Control *)
   mutable running : bool;
+  mutable shutdown_complete : bool;
 }
 
 type t = session
@@ -74,6 +75,19 @@ type t = session
 let get_id s = s.session_id
 let get_clients s = Hashtbl.fold (fun _ c acc -> c :: acc) s.clients []
 let get_agent_pid s = Some s.agent_pid
+
+let signal_process_group pid signal =
+  try Unix.kill (-pid) signal with _ -> ()
+
+let rec reap_process pid attempts =
+  if attempts <= 0 then
+    ()
+  else
+    match Unix.waitpid [Unix.WNOHANG] pid with
+    | 0, _ ->
+      Unix.sleepf 0.1;
+      reap_process pid (attempts - 1)
+    | _, _ -> ()
 
 let compact_output_buffer buffer ~last_sent_pos =
   if Buffer.length buffer <= 100000 then
@@ -190,44 +204,58 @@ let rec broadcast_loop (t : session) =
       if buf_len > t.last_sent_pos then (
         let data = Buffer.sub t.output_buffer t.last_sent_pos (buf_len - t.last_sent_pos) in
         t.last_sent_pos <- buf_len;
-        let* () =
+        let* clients =
           Lwt_mutex.with_lock t.clients_lock (fun () ->
-            let dead = ref [] in
-
-            let send_to_client fd client =
-              Lwt.pick [
-                (* Try to write with timeout *)
-                (let rec write_all offset remaining =
-                   if remaining = 0 then
-                     Lwt.return_unit
-                   else
-                     let* written = Lwt_unix.write client.socket
-                       (Bytes.unsafe_of_string data) offset remaining in
-                     if written > 0 then
-                       write_all (offset + written) (remaining - written)
-                     else
-                       Lwt.return_unit
-                 in
-                 write_all 0 (String.length data));
-                (* Timeout after 5 seconds - client is too slow *)
-                (let* () = Lwt_unix.sleep 5.0 in
-                 let* () = Logs_lwt.warn (fun m -> m "Client %s slow, disconnecting" client.addr) in
-                 dead := fd :: !dead;
-                 Lwt.return_unit);
-              ]
-            in
-
-            let* () =
-              Hashtbl.fold
-                (fun fd c acc -> let* () = send_to_client fd c in acc)
-                t.clients
-                Lwt.return_unit
-            in
-
-            (* Clean up dead clients *)
-            List.iter (fun fd -> Hashtbl.remove t.clients fd) !dead;
-            Lwt.return_unit
+            Lwt.return (Hashtbl.fold (fun fd c acc -> (fd, c) :: acc) t.clients [])
           )
+        in
+        let dead = ref [] in
+
+        let send_to_client fd client =
+          Lwt.pick [
+            (* Try to write with timeout *)
+            (let rec write_all offset remaining =
+               if remaining = 0 then
+                 Lwt.return_unit
+               else
+                 let* written = Lwt_unix.write client.socket
+                   (Bytes.unsafe_of_string data) offset remaining in
+                 if written > 0 then
+                   write_all (offset + written) (remaining - written)
+                 else
+                   Lwt.return_unit
+             in
+             Lwt.catch
+               (fun () -> write_all 0 (String.length data))
+               (fun _ ->
+                 dead := fd :: !dead;
+                 Lwt.return_unit));
+            (* Timeout after 5 seconds - client is too slow *)
+            (let* () = Lwt_unix.sleep 5.0 in
+             let* () = Logs_lwt.warn (fun m -> m "Client %s slow, disconnecting" client.addr) in
+             dead := fd :: !dead;
+             Lwt.return_unit);
+          ]
+        in
+
+        let rec send_all = function
+          | [] -> Lwt.return_unit
+          | (fd, client) :: rest ->
+            let* () = send_to_client fd client in
+            send_all rest
+        in
+        let* () = send_all clients in
+        let* () =
+          if !dead = [] then
+            Lwt.return_unit
+          else
+            Lwt_mutex.with_lock t.clients_lock (fun () ->
+              List.iter (fun fd ->
+                Hashtbl.remove t.clients fd;
+                try Unix.close (Lwt_unix.unix_file_descr fd) with _ -> ()
+              ) !dead;
+              Lwt.return_unit
+            )
         in
         broadcast_loop t
       ) else
@@ -290,6 +318,7 @@ let create ~session_id ~creator ~agent_user ~program ~args ~rows ~cols ~audit =
         output_cond = Lwt_condition.create ();
         last_sent_pos = 0;
         running = true;
+        shutdown_complete = false;
       } in
 
       (* PTY slave is configured in fork_agent; master doesn't need raw mode *)
@@ -368,16 +397,20 @@ let is_alive t =
   with Unix.Unix_error _ -> false
 
 let shutdown t =
-  if not t.running then
+  if t.shutdown_complete then
     Lwt.return_unit
   else
-    let () = t.running <- false in
+    let () =
+      t.running <- false;
+      t.shutdown_complete <- true
+    in
     Lwt_condition.broadcast t.output_cond ();
 
-    (* Terminate agent *)
-    (try Unix.kill t.agent_pid Sys.sigterm with _ -> ());
+    (* Terminate the agent process group so descendants cannot outlive the session. *)
+    signal_process_group t.agent_pid Sys.sigterm;
     let* () = Lwt_unix.sleep 1.0 in
-    (try Unix.kill t.agent_pid Sys.sigkill with _ -> ());
+    signal_process_group t.agent_pid Sys.sigkill;
+    let () = reap_process t.agent_pid 10 in
 
     (* Close PTY *)
     let* () = Pty.close t.pty in
