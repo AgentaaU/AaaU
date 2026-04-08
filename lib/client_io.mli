@@ -6,6 +6,19 @@ val write_all : Lwt_unix.file_descr -> string -> unit Lwt.t
 val split_handshake_response : string -> string * string
 (** Split a handshake response into the first line and trailing output bytes. *)
 
+type line_result =
+  | End_of_file
+  | Line of string * string
+  | Timeout_line
+
+val read_line_with_remainder :
+  ?timeout:float ->
+  ?max_length:int ->
+  Lwt_unix.file_descr ->
+  line_result Lwt.t
+(** Read from a socket until a newline is received, returning the line without
+    the newline and any trailing bytes already received. *)
+
 type handshake_result =
   | Timeout
   | Response of string * string

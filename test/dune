@@ -105,6 +105,11 @@
  (libraries AaaU))
 
 (test
+ (name test_handshake_line_reader)
+ (modules test_handshake_line_reader)
+ (libraries AaaU))
+
+(test
  (name test_audit_log_dir)
  (modules test_audit_log_dir)
  (libraries AaaU))
