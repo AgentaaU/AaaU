@@ -42,7 +42,7 @@ aaau -p 'claude --dangerously-skip-permissions'
 aaau codex
 
 # Shortcut alias for claude with the standard skip-permissions flag
-aaau cluade
+aaau claude
 ```
 
 ## Overview
