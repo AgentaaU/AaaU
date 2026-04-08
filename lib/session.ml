@@ -67,6 +67,7 @@ type session = {
 
   (* Control *)
   mutable running : bool;
+  mutable shutdown_complete : bool;
 }
 
 type t = session
@@ -74,6 +75,19 @@ type t = session
 let get_id s = s.session_id
 let get_clients s = Hashtbl.fold (fun _ c acc -> c :: acc) s.clients []
 let get_agent_pid s = Some s.agent_pid
+
+let signal_process_group pid signal =
+  try Unix.kill (-pid) signal with _ -> ()
+
+let rec reap_process pid attempts =
+  if attempts <= 0 then
+    ()
+  else
+    match Unix.waitpid [Unix.WNOHANG] pid with
+    | 0, _ ->
+      Unix.sleepf 0.1;
+      reap_process pid (attempts - 1)
+    | _, _ -> ()
 
 let compact_output_buffer buffer ~last_sent_pos =
   if Buffer.length buffer <= 100000 then
@@ -290,6 +304,7 @@ let create ~session_id ~creator ~agent_user ~program ~args ~rows ~cols ~audit =
         output_cond = Lwt_condition.create ();
         last_sent_pos = 0;
         running = true;
+        shutdown_complete = false;
       } in
 
       (* PTY slave is configured in fork_agent; master doesn't need raw mode *)
@@ -368,16 +383,20 @@ let is_alive t =
   with Unix.Unix_error _ -> false
 
 let shutdown t =
-  if not t.running then
+  if t.shutdown_complete then
     Lwt.return_unit
   else
-    let () = t.running <- false in
+    let () =
+      t.running <- false;
+      t.shutdown_complete <- true
+    in
     Lwt_condition.broadcast t.output_cond ();
 
-    (* Terminate agent *)
-    (try Unix.kill t.agent_pid Sys.sigterm with _ -> ());
+    (* Terminate the agent process group so descendants cannot outlive the session. *)
+    signal_process_group t.agent_pid Sys.sigterm;
     let* () = Lwt_unix.sleep 1.0 in
-    (try Unix.kill t.agent_pid Sys.sigkill with _ -> ());
+    signal_process_group t.agent_pid Sys.sigkill;
+    let () = reap_process t.agent_pid 10 in
 
     (* Close PTY *)
     let* () = Pty.close t.pty in
