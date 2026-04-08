@@ -5,6 +5,12 @@
  (enabled_if (= %{system} "linux")))
 
 (test
+ (name test_pty_permissions)
+ (modules test_pty_permissions)
+ (libraries AaaU)
+ (enabled_if (= %{system} "linux")))
+
+(test
  (name test_pty_error_handling)
  (modules test_pty_error_handling)
  (libraries AaaU))
