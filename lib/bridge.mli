@@ -5,6 +5,7 @@ type t
 val create :
   socket_path:string ->
   shared_group:string ->
+  admin_group:string ->
   agent_user:string ->
   log_dir:string ->
   ?default_program:string ->

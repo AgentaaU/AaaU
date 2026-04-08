@@ -22,6 +22,7 @@ let test_client_disconnect () =
   let server = AaaU.Bridge.create
     ~socket_path
     ~shared_group:(try Unix.getenv "USER" with _ -> "nogroup")
+    ~admin_group:(try Unix.getenv "USER" with _ -> "nogroup")
     ~agent_user:(try Unix.getenv "USER" with _ -> "nobody")
     ~log_dir
     ~default_program:"/bin/bash"

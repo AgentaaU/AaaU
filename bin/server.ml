@@ -12,6 +12,10 @@ let shared_group =
   let doc = "Group name for authorized users" in
   Arg.(value & opt string "agent" & info ["g"; "group"] ~docv:"GROUP" ~doc)
 
+let admin_group =
+  let doc = "Group name for admin users allowed to force-kill sessions" in
+  Arg.(value & opt string "agent-admin" & info ["admin-group"] ~docv:"GROUP" ~doc)
+
 let agent_user =
   let doc = "System user for running agents" in
   Arg.(value & opt string "agent" & info ["u"; "user"] ~docv:"USER" ~doc)
@@ -94,7 +98,7 @@ let remove_lock_file path =
     try Unix.unlink path with _ -> ()
   end
 
-let run_server socket_path shared_group agent_user log_dir daemonize default_program lock_file_path =
+let run_server socket_path shared_group admin_group agent_user log_dir daemonize default_program lock_file_path =
   (* Check for root privileges *)
   if Unix.getuid () <> 0 then begin
     Printf.eprintf "Error: Need root permission to run server.\n%!";
@@ -131,6 +135,7 @@ let run_server socket_path shared_group agent_user log_dir daemonize default_pro
   let server = AaaU.Bridge.create
     ~socket_path
     ~shared_group
+    ~admin_group
     ~agent_user
     ~log_dir
     ~default_program
@@ -155,7 +160,7 @@ let run_server socket_path shared_group agent_user log_dir daemonize default_pro
 let run_cmd =
   let doc = "Run the server" in
   let info = Cmd.info "run" ~doc in
-  Cmd.v info Term.(const run_server $ socket_path $ shared_group $ agent_user $ log_dir $ daemonize $ default_program $ lock_file)
+  Cmd.v info Term.(const run_server $ socket_path $ shared_group $ admin_group $ agent_user $ log_dir $ daemonize $ default_program $ lock_file)
 
 (* Init subcommand *)
 let home_dir =
@@ -186,7 +191,7 @@ let run_command cmd =
   let status = Sys.command cmd in
   status = 0
 
-let run_init agent_user shared_group socket_path log_dir home_dir shell =
+let run_init agent_user shared_group admin_group socket_path log_dir home_dir shell =
   (* Check for root privileges *)
   if Unix.getuid () <> 0 then begin
     Printf.eprintf "Error: Need root permission to initialize environment.\n%!";
@@ -199,7 +204,7 @@ let run_init agent_user shared_group socket_path log_dir home_dir shell =
   let exit_code = ref 0 in
   
   (* Step 1: Create shared group *)
-  Printf.printf "[1/5] Checking shared group '%s'...\n%!" shared_group;
+  Printf.printf "[1/6] Checking shared group '%s'...\n%!" shared_group;
   if group_exists shared_group then begin
     Printf.printf "    Group '%s' already exists.\n%!" shared_group
   end else begin
@@ -211,9 +216,23 @@ let run_init agent_user shared_group socket_path log_dir home_dir shell =
       exit_code := 1
     end
   end;
+
+  (* Step 2: Create admin group *)
+  Printf.printf "\n[2/6] Checking admin group '%s'...\n%!" admin_group;
+  if group_exists admin_group then begin
+    Printf.printf "    Group '%s' already exists.\n%!" admin_group
+  end else begin
+    Printf.printf "    Creating group '%s'...\n%!" admin_group;
+    if run_command (Printf.sprintf "groupadd --system %s" admin_group) then
+      Printf.printf "    Group created successfully.\n%!"
+    else begin
+      Printf.eprintf "    ERROR: Failed to create group '%s'.\n%!" admin_group;
+      exit_code := 1
+    end
+  end;
   
-  (* Step 2: Create agent user *)
-  Printf.printf "\n[2/5] Checking agent user '%s'...\n%!" agent_user;
+  (* Step 3: Create agent user *)
+  Printf.printf "\n[3/6] Checking agent user '%s'...\n%!" agent_user;
   if user_exists agent_user then begin
     Printf.printf "    User '%s' already exists.\n%!" agent_user;
     (* Add user to shared group if not already *)
@@ -239,8 +258,8 @@ let run_init agent_user shared_group socket_path log_dir home_dir shell =
     end
   end;
   
-  (* Step 3: Create socket directory *)
-  Printf.printf "\n[3/5] Creating socket directory...\n%!";
+  (* Step 4: Create socket directory *)
+  Printf.printf "\n[4/6] Creating socket directory...\n%!";
   let socket_dir = Filename.dirname socket_path in
   if Sys.file_exists socket_dir then
     Printf.printf "    Directory '%s' already exists.\n%!" socket_dir
@@ -260,8 +279,8 @@ let run_init agent_user shared_group socket_path log_dir home_dir shell =
     end
   end;
   
-  (* Step 4: Create log directory *)
-  Printf.printf "\n[4/5] Creating log directory...\n%!";
+  (* Step 5: Create log directory *)
+  Printf.printf "\n[5/6] Creating log directory...\n%!";
   if Sys.file_exists log_dir then
     Printf.printf "    Directory '%s' already exists.\n%!" log_dir
   else begin
@@ -276,8 +295,8 @@ let run_init agent_user shared_group socket_path log_dir home_dir shell =
     end
   end;
   
-  (* Step 5: Verify sudoers access for agent user *)
-  Printf.printf "\n[5/5] Checking sudo configuration...\n%!";
+  (* Step 6: Verify sudoers access for agent user *)
+  Printf.printf "\n[6/6] Checking sudo configuration...\n%!";
   Printf.printf "    NOTE: Ensure '%s' can run commands as other users.\n%!" agent_user;
   Printf.printf "    You may need to add this to /etc/sudoers:\n%!";
   Printf.printf "        %s ALL=(ALL) NOPASSWD: /bin/bash, /bin/sh, /usr/bin/env\n%!" agent_user;
@@ -289,7 +308,9 @@ let run_init agent_user shared_group socket_path log_dir home_dir shell =
   Printf.printf "  1. Review and configure sudoers if needed\n%!";
   Printf.printf "  2. Add human users to group '%s':\n%!" shared_group;
   Printf.printf "       usermod -aG %s <username>\n%!" shared_group;
-  Printf.printf "  3. Run the server:\n%!";
+  Printf.printf "  3. Add admin users to group '%s' if they need force-kill access:\n%!" admin_group;
+  Printf.printf "       usermod -aG %s <username>\n%!" admin_group;
+  Printf.printf "  4. Run the server:\n%!";
   Printf.printf "       aaau-server run\n%!";
   
   exit !exit_code
@@ -297,7 +318,7 @@ let run_init agent_user shared_group socket_path log_dir home_dir shell =
 let init_cmd =
   let doc = "Initialize environment for Agent-as-User (creates users, groups, directories)" in
   let info = Cmd.info "init" ~doc in
-  Cmd.v info Term.(const run_init $ agent_user $ shared_group $ socket_path $ log_dir $ home_dir $ shell)
+  Cmd.v info Term.(const run_init $ agent_user $ shared_group $ admin_group $ socket_path $ log_dir $ home_dir $ shell)
 
 (* Main command *)
 let main_cmd =

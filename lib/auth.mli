@@ -16,12 +16,14 @@ val authenticate :
   peer_uid:int ->
   peer_gid:int ->
   shared_group:string ->
+  admin_group:string ->
   (user_info, string) result
 (** Authenticate user based on Unix socket credentials *)
 
 val authenticate_socket :
   Unix.file_descr ->
   shared_group:string ->
+  admin_group:string ->
   (user_info, string) result
 (** Authenticate a connected Unix domain socket peer *)
 

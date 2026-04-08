@@ -5,6 +5,7 @@ open Lwt.Syntax
 type t = {
   socket_path : string;
   shared_group : string;
+  admin_group : string;
   agent_user : string;
   default_program : string;
   default_args : string list;
@@ -16,11 +17,12 @@ type t = {
   mutable running : bool;
 }
 
-let create ~socket_path ~shared_group ~agent_user ~log_dir ?(default_program="/bin/bash") ?(default_args=["-l"]) () =
+let create ~socket_path ~shared_group ~admin_group ~agent_user ~log_dir ?(default_program="/bin/bash") ?(default_args=["-l"]) () =
   let audit = Audit.create ~log_dir in
   {
     socket_path;
     shared_group;
+    admin_group;
     agent_user;
     default_program;
     default_args;
@@ -55,7 +57,12 @@ let setup_socket t =
   Logs_lwt.info (fun m -> m "Server listening on %s" t.socket_path)
 
 let authenticate_client t client_fd =
-  Lwt.return (Auth.authenticate_socket (Lwt_unix.unix_file_descr client_fd) ~shared_group:t.shared_group)
+  Lwt.return (
+    Auth.authenticate_socket
+      (Lwt_unix.unix_file_descr client_fd)
+      ~shared_group:t.shared_group
+      ~admin_group:t.admin_group
+  )
 
 let parse_new_json payload =
   match Yojson.Safe.from_string payload with
