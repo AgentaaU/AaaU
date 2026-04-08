@@ -43,6 +43,9 @@ aaau codex
 
 # Shortcut alias for claude with the standard skip-permissions flag
 aaau claude
+
+# Run with custom program
+aaau -p 'your-command arg1 arg2'
 ```
 
 ## Overview
@@ -75,12 +78,14 @@ aaau claude
 ## Features
 
 - **Process Isolation**: Each agent runs as a dedicated system user
+- **Process Group Termination**: Agent process groups are killed on shutdown, preventing zombie processes
 - **Resource Limits**: Leverages cgroups via systemd for resource control
 - **File Isolation**: Each agent has its own `$HOME` directory
 - **Audit Logging**: Complete session recording in JSON format
 - **Multi-Client Support**: Multiple humans can connect to observe/interact
 - **Permission Levels**: Read-only, Interactive, and Admin access levels
 - **Unix Domain Sockets**: Fast, secure local communication
+- **Robust Handshake**: Handles fragmented network reads during connection establishment
 
 ## Architecture
 
@@ -335,6 +340,17 @@ bin/
 - Requires root/sudo for user switching
 - Some ioctl operations require C bindings (currently simplified)
 - GPU/graphics access requires additional setup
+
+## Recent Changes
+
+### April 2026
+
+- **Process Group Termination**: Agent process groups are now killed on shutdown, preventing orphaned child/grandchild processes
+- **Robust Handshake Reading**: Handshake reads now handle fragmented network packets correctly, improving connection reliability
+- **Lock-Free Broadcast Writes**: Client locks are no longer held during broadcast writes, reducing contention
+- **Secure Argument Handling**: Agent arguments are no longer subject to shell re-parsing, preventing argument injection attacks
+- **Fixed Unix Socket Authentication**: Peer credential authentication now uses proper C bindings for reliable `SO_PEERCRED` handling
+- **Client Aliases**: Added `aaau codex` and `aaau claude` shortcuts for common agent invocations
 
 ## License
 
