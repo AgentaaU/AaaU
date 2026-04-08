@@ -37,13 +37,13 @@ let expect_expanded_split alias expected_program expected_args =
 let () =
   Printf.printf "=== Test: Program alias expansion ===\n%!";
   expect_alias "codex" "codex --dangerously-bypass-approvals-and-sandbox";
-  expect_alias "cluade" "claude --dangerously-skip-permissions";
+  expect_alias "claude" "claude --dangerously-skip-permissions";
   expect_expanded_split "codex" "codex" ["--dangerously-bypass-approvals-and-sandbox"];
-  expect_expanded_split "cluade" "claude" ["--dangerously-skip-permissions"];
+  expect_expanded_split "claude" "claude" ["--dangerously-skip-permissions"];
   expect_no_alias "unknown";
   expect_no_alias "Codex";
   expect_no_alias "CLAUDE";
-  expect_no_alias " cluade";
-  expect_no_alias "cluade ";
+  expect_no_alias " claude";
+  expect_no_alias "claude ";
   expect_no_alias "";
   Printf.printf "PASS\n%!"
