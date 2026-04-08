@@ -190,44 +190,58 @@ let rec broadcast_loop (t : session) =
       if buf_len > t.last_sent_pos then (
         let data = Buffer.sub t.output_buffer t.last_sent_pos (buf_len - t.last_sent_pos) in
         t.last_sent_pos <- buf_len;
-        let* () =
+        let* clients =
           Lwt_mutex.with_lock t.clients_lock (fun () ->
-            let dead = ref [] in
-
-            let send_to_client fd client =
-              Lwt.pick [
-                (* Try to write with timeout *)
-                (let rec write_all offset remaining =
-                   if remaining = 0 then
-                     Lwt.return_unit
-                   else
-                     let* written = Lwt_unix.write client.socket
-                       (Bytes.unsafe_of_string data) offset remaining in
-                     if written > 0 then
-                       write_all (offset + written) (remaining - written)
-                     else
-                       Lwt.return_unit
-                 in
-                 write_all 0 (String.length data));
-                (* Timeout after 5 seconds - client is too slow *)
-                (let* () = Lwt_unix.sleep 5.0 in
-                 let* () = Logs_lwt.warn (fun m -> m "Client %s slow, disconnecting" client.addr) in
-                 dead := fd :: !dead;
-                 Lwt.return_unit);
-              ]
-            in
-
-            let* () =
-              Hashtbl.fold
-                (fun fd c acc -> let* () = send_to_client fd c in acc)
-                t.clients
-                Lwt.return_unit
-            in
-
-            (* Clean up dead clients *)
-            List.iter (fun fd -> Hashtbl.remove t.clients fd) !dead;
-            Lwt.return_unit
+            Lwt.return (Hashtbl.fold (fun fd c acc -> (fd, c) :: acc) t.clients [])
           )
+        in
+        let dead = ref [] in
+
+        let send_to_client fd client =
+          Lwt.pick [
+            (* Try to write with timeout *)
+            (let rec write_all offset remaining =
+               if remaining = 0 then
+                 Lwt.return_unit
+               else
+                 let* written = Lwt_unix.write client.socket
+                   (Bytes.unsafe_of_string data) offset remaining in
+                 if written > 0 then
+                   write_all (offset + written) (remaining - written)
+                 else
+                   Lwt.return_unit
+             in
+             Lwt.catch
+               (fun () -> write_all 0 (String.length data))
+               (fun _ ->
+                 dead := fd :: !dead;
+                 Lwt.return_unit));
+            (* Timeout after 5 seconds - client is too slow *)
+            (let* () = Lwt_unix.sleep 5.0 in
+             let* () = Logs_lwt.warn (fun m -> m "Client %s slow, disconnecting" client.addr) in
+             dead := fd :: !dead;
+             Lwt.return_unit);
+          ]
+        in
+
+        let rec send_all = function
+          | [] -> Lwt.return_unit
+          | (fd, client) :: rest ->
+            let* () = send_to_client fd client in
+            send_all rest
+        in
+        let* () = send_all clients in
+        let* () =
+          if !dead = [] then
+            Lwt.return_unit
+          else
+            Lwt_mutex.with_lock t.clients_lock (fun () ->
+              List.iter (fun fd ->
+                Hashtbl.remove t.clients fd;
+                try Unix.close (Lwt_unix.unix_file_descr fd) with _ -> ()
+              ) !dead;
+              Lwt.return_unit
+            )
         in
         broadcast_loop t
       ) else
