@@ -17,6 +17,11 @@ type server_message =
 
 let control_char = '\x01'
 
+(* Keep a single, explicit bound for data accepted from an untrusted client.
+   Apart from protecting memory, this prevents a malformed length prefix from
+   making the receiver wait indefinitely while its input buffer grows. *)
+let max_frame_size = 1_000_000
+
 let encode_client = function
   | Input s -> s
   | Resize { rows; cols } ->
@@ -54,13 +59,27 @@ let encode_server = function
 let decode_server s =
   if String.length s > 0 && s.[0] = control_char then
     let payload = String.sub s 1 (String.length s - 1) in
-    match String.split_on_char ':' payload with
-    | ["PONG"] -> Pong
-    | ["STATUS"; json] ->
-      (try Status (Yojson.Safe.from_string json) with _ -> Control payload)
-    | ["ERROR"; msg] -> Error msg
-    | ["CONTROL"; msg] -> Control msg
-    | _ -> Control payload
+    if payload = "PONG" then
+      Pong
+    else
+      let decode_with_prefix prefix make_message =
+        if String.starts_with ~prefix payload then
+          let value = String.sub payload (String.length prefix)
+            (String.length payload - String.length prefix) in
+          Some (make_message value)
+        else
+          None
+      in
+      match decode_with_prefix "STATUS:" (fun json ->
+        try Status (Yojson.Safe.from_string json) with _ -> Control payload) with
+      | Some message -> message
+      | None ->
+        match decode_with_prefix "ERROR:" (fun message -> Error message) with
+        | Some message -> message
+        | None ->
+          match decode_with_prefix "CONTROL:" (fun message -> Control message) with
+          | Some message -> message
+          | None -> Control payload
   else
     Output s
 
@@ -81,7 +100,7 @@ let try_parse_framed buf =
     None
   else
     let len = Int32.to_int (Bytes.get_int32_be (Bytes.unsafe_of_string buf) 0) in
-    if len < 0 || len > 1000000 then
+    if len < 0 || len > max_frame_size then
       (* Invalid length - skip this buffer *)
       None
     else if String.length buf >= 4 + len then

@@ -54,6 +54,7 @@ type session = {
   (* PTY *)
   pty : Pty.t;
   agent_pid : int;
+  agent_user : string;
 
   (* Client management *)
   clients : (Lwt_unix.file_descr, client) Hashtbl.t;
@@ -150,6 +151,19 @@ let rec pty_read_loop (t : session) =
         Lwt.return_unit
     ) else (
       let data = Bytes.sub_string buf 0 n in
+
+      (* Audit output before it is forwarded.  This is intentionally separate
+         from the history buffer: output compaction must not trim the audit
+         trail. *)
+      let* () = Audit.log t.audit {
+        timestamp = Unix.time ();
+        source = "agent";
+        user = t.agent_user;
+        session_id = t.session_id;
+        command_type = "output";
+        content = data;
+        metadata = [];
+      } in
 
       (* Save to buffer *)
       Buffer.add_string t.output_buffer data;
@@ -311,6 +325,7 @@ let create ~session_id ~creator ~agent_user ~program ~args ~rows ~cols ~audit =
         audit;
         pty;
         agent_pid = pid;
+        agent_user;
         clients = Hashtbl.create 10;
         clients_lock = Lwt_mutex.create ();
         input_queue = Lwt_queue.create ();
