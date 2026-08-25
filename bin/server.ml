@@ -180,11 +180,21 @@ let group_exists groupname =
     true
   with Not_found -> false
 
-(* Run a command and return success status *)
-let run_command cmd =
-  Printf.printf "Running: %s\n%!" cmd;
-  let status = Sys.command cmd in
-  status = 0
+(* Run setup utilities without a shell.  The init options are administrator
+   supplied, but feeding them to Sys.command would still make spaces and shell
+   metacharacters change the command being executed as root. *)
+let run_command program args =
+  Printf.printf "Running: %s\n%!" (String.concat " " (program :: args));
+  try
+    let pid = Unix.create_process program (Array.of_list (program :: args))
+      Unix.stdin Unix.stdout Unix.stderr in
+    match snd (Unix.waitpid [] pid) with
+    | Unix.WEXITED 0 -> true
+    | Unix.WEXITED _ | Unix.WSIGNALED _ | Unix.WSTOPPED _ -> false
+  with Unix.Unix_error (err, fn, arg) ->
+    Printf.eprintf "Failed to run %s(%s): %s\n%!" fn arg
+      (Unix.error_message err);
+    false
 
 let run_init agent_user shared_group socket_path log_dir home_dir shell =
   (* Check for root privileges *)
@@ -204,7 +214,7 @@ let run_init agent_user shared_group socket_path log_dir home_dir shell =
     Printf.printf "    Group '%s' already exists.\n%!" shared_group
   end else begin
     Printf.printf "    Creating group '%s'...\n%!" shared_group;
-    if run_command (Printf.sprintf "groupadd --system %s" shared_group) then
+    if run_command "groupadd" ["--system"; shared_group] then
       Printf.printf "    Group created successfully.\n%!"
     else begin
       Printf.eprintf "    ERROR: Failed to create group '%s'.\n%!" shared_group;
@@ -218,21 +228,22 @@ let run_init agent_user shared_group socket_path log_dir home_dir shell =
     Printf.printf "    User '%s' already exists.\n%!" agent_user;
     (* Add user to shared group if not already *)
     Printf.printf "    Adding user to group '%s'...\n%!" shared_group;
-    ignore (run_command (Printf.sprintf "usermod -aG %s %s" shared_group agent_user))
+    ignore (run_command "usermod" ["-aG"; shared_group; agent_user])
   end else begin
     Printf.printf "    Creating user '%s'...\n%!" agent_user;
     (* Create parent directory for home if it doesn't exist *)
     if not (Sys.file_exists home_dir) then begin
       Printf.printf "    Creating parent directory '%s'...\n%!" home_dir;
-      ignore (run_command (Printf.sprintf "mkdir -p %s" home_dir))
+      ignore (run_command "mkdir" ["-p"; home_dir])
     end;
     (* Create home directory *)
     let home = Filename.concat home_dir agent_user in
-    if run_command (Printf.sprintf "useradd --system --gid %s --home-dir %s --shell %s --create-home %s"
-                      shared_group home shell agent_user) then begin
+    if run_command "useradd"
+         ["--system"; "--gid"; shared_group; "--home-dir"; home;
+          "--shell"; shell; "--create-home"; agent_user] then begin
       Printf.printf "    User created successfully.\n%!";
       (* Set ownership of home directory *)
-      ignore (run_command (Printf.sprintf "chown %s:%s %s" agent_user shared_group home))
+      ignore (run_command "chown" [agent_user ^ ":" ^ shared_group; home])
     end else begin
       Printf.eprintf "    ERROR: Failed to create user '%s'.\n%!" agent_user;
       exit_code := 1
@@ -245,7 +256,7 @@ let run_init agent_user shared_group socket_path log_dir home_dir shell =
   if Sys.file_exists socket_dir then
     Printf.printf "    Directory '%s' already exists.\n%!" socket_dir
   else begin
-    if run_command (Printf.sprintf "mkdir -p %s" socket_dir) then begin
+    if run_command "mkdir" ["-p"; socket_dir] then begin
       Printf.printf "    Directory created.\n%!";
       (* Set permissions: root:shared_group 775 *)
       if group_exists shared_group then begin
@@ -265,11 +276,17 @@ let run_init agent_user shared_group socket_path log_dir home_dir shell =
   if Sys.file_exists log_dir then
     Printf.printf "    Directory '%s' already exists.\n%!" log_dir
   else begin
-    if run_command (Printf.sprintf "mkdir -p %s" log_dir) then begin
+    if run_command "mkdir" ["-p"; log_dir] then begin
       Printf.printf "    Directory created.\n%!";
-      (* Set permissions: writable by all, sticky bit *)
-      Unix.chmod log_dir 0o1777;
-      Printf.printf "    Permissions set (1777).\n%!"
+      (* Audit output can contain prompts and agent output.  Keep it writable
+         only by the service account instead of allowing arbitrary local users
+         to create files in the log directory. *)
+      if group_exists shared_group then begin
+        let gid = (Unix.getgrnam shared_group).Unix.gr_gid in
+        Unix.chown log_dir 0 gid;
+        Unix.chmod log_dir 0o750;
+        Printf.printf "    Permissions set (root:%s 750).\n%!" shared_group
+      end
     end else begin
       Printf.eprintf "    ERROR: Failed to create directory '%s'.\n%!" log_dir;
       exit_code := 1
