@@ -139,3 +139,34 @@
  (name test_program_alias)
  (modules test_program_alias)
  (libraries AaaU))
+
+(test
+ (name test_editor_protocol)
+ (modules test_editor_protocol)
+ (libraries AaaU))
+
+(test
+ (name test_editor_framing)
+ (modules test_editor_framing)
+ (libraries AaaU))
+
+(test
+ (name test_editor_buffer)
+ (modules test_editor_buffer)
+ (libraries AaaU))
+
+(test
+ (name test_editor_provider)
+ (modules test_editor_provider)
+ (libraries AaaU))
+
+(test
+ (name test_editor_authorization)
+ (modules test_editor_authorization)
+ (libraries AaaU))
+
+(test
+ (name test_editor_session)
+ (modules test_editor_session)
+ (libraries AaaU)
+ (enabled_if (= %{system} "linux")))

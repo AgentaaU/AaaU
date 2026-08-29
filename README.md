@@ -14,8 +14,9 @@ wget https://github.com/AgentaaU/AaaU/releases/latest/download/aaau-linux.tar.gz
 tar -xzf aaau-linux.tar.gz
 
 # Install to system
-sudo install server /usr/local/bin/aaau-server
-sudo install client /usr/local/bin/aaau
+sudo install aaau-server /usr/local/bin/aaau-server
+sudo install aaau /usr/local/bin/aaau
+sudo install aaau-editor /usr/local/bin/aaau-editor
 ```
 
 ### 2. Initialize Agent User
@@ -81,6 +82,7 @@ aaau claude
 - **Multi-Client Support**: Multiple humans can connect to observe/interact
 - **Permission Levels**: Read-only, Interactive, and Admin access levels
 - **Unix Domain Sockets**: Fast, secure local communication
+- **Creator Editor Forwarding**: `C-g` editor buffers return to the session creator's existing Emacs
 
 ## Architecture
 
@@ -120,6 +122,7 @@ dune build
 ```bash
 sudo cp _build/install/default/bin/aaau-server /usr/local/bin/
 sudo cp _build/install/default/bin/aaau /usr/local/bin/
+sudo cp _build/install/default/bin/aaau-editor /usr/local/bin/
 ```
 
 ## Setup
@@ -144,7 +147,7 @@ If you prefer to set up manually:
 
 ```bash
 # Create dedicated user for running agents
-sudo useradd -r -s /bin/false -d /home/agent agent
+sudo useradd -r -U -s /bin/false -d /home/agent agent
 ```
 
 #### 2. Create Shared Group
@@ -153,6 +156,8 @@ sudo useradd -r -s /bin/false -d /home/agent agent
 # Create group for authorized human users
 sudo groupadd agent-shared
 sudo usermod -aG agent-shared $USER
+
+# Do not add the agent account to agent-shared and do not grant it sudo.
 ```
 
 #### 3. Create Directories
@@ -161,7 +166,7 @@ sudo usermod -aG agent-shared $USER
 sudo mkdir -p /var/run/aaau
 sudo mkdir -p /var/log/aaau
 sudo chown root:agent-shared /var/run/aaau
-sudo chmod 775 /var/run/aaau
+sudo chmod 755 /var/run/aaau
 ```
 
 ## Usage
@@ -188,21 +193,22 @@ The `init` command will:
 2. Create the agent user (e.g., `agent`)
 3. Create socket directory with proper permissions
 4. Create log directory with proper permissions
-5. Display sudo configuration suggestions
+5. Verify that the agent has neither human-group membership nor sudo access
 
 ### Start the Server
 
 ```bash
 # Run in foreground
-sudo aaau-server run -s /var/run/aaau.sock -g agent
+sudo aaau-server run -s /var/run/aaau/server.sock -g aaau-users
 
 # Or as daemon
-sudo aaau-server run -d -s /var/run/aaau.sock -g agent
+sudo aaau-server run -d -s /var/run/aaau/server.sock -g aaau-users
 ```
 
 Options:
-- `-s, --socket`: Unix socket path (default: `/var/run/aaau.sock`)
-- `-g, --group`: Authorized group name (default: `agent`)
+- `-s, --socket`: Unix socket path (default: `/var/run/aaau/server.sock`)
+- `--editor-socket`: Agent-only editor request socket (default: `/var/run/aaau/editor.sock`)
+- `-g, --group`: Authorized human group name (default: `aaau-users`)
 - `-u, --user`: Agent system user (default: `agent`)
 - `-l, --log-dir`: Audit log directory (default: `/var/log/aaau`)
 - `-d, --daemon`: Run as daemon
@@ -220,11 +226,73 @@ aaau -s /var/run/aaau/server.sock -n <session-id>
 aaau -s /var/run/aaau/server.sock -n <session-id> -r
 ```
 
+### Editing Codex or Claude buffers in your Emacs
+
+Start an Emacs server in an existing visible Emacs frame before creating the
+AaaU session:
+
+```bash
+# M-x server-start in an existing Emacs
+aaau codex
+```
+
+The interactive session creator automatically registers a separate editor
+provider. AaaU injects `EDITOR=aaau-editor`, `VISUAL=aaau-editor`,
+`AAAU_SESSION_ID`, and `AAAU_EDITOR_SOCKET` into the isolated agent session.
+When Codex or Claude invokes its editor (for example after `C-g`), the helper
+accepts exactly one agent-owned regular buffer file, sends only its bounded
+contents over the agent-only socket, and blocks. The creator-side provider:
+
+1. atomically creates an unpredictable mode-`0600` file below `/tmp`;
+2. invokes `emacsclient -- <temporary>` directly, without a shell (emacsclient
+   waits by default; AaaU never passes `--no-wait`);
+3. returns the edited bounded contents and always removes the temporary.
+
+Save normally with `C-x C-s`, then finish the server edit with `C-x #`
+(`server-edit`). Provider failure or timeout leaves the original unchanged;
+success updates the helper's already-open original descriptor. A local copy-back
+I/O failure returns a non-zero status and attempts to restore the bounded
+original content.
+
+Use `--no-editor-forwarding` to disable the provider. Use
+`--editor-command 'emacsclient ...'` to supply a different directly executed
+argv; quoting is parsed, but `/bin/sh -c` is never used. Only a new interactive
+session creator provides editing: `--readonly` clients and clients joining with
+`--session` never do. If Emacs is not running, the creator disconnects, or the
+request times out, `aaau-editor` reports that forwarding is unavailable and the
+PTY session continues normally.
+
+If you use `emacs --daemon`, configure a client frame explicitly, for example
+`aaau --editor-command 'emacsclient -c' codex`; a daemon alone has no visible
+frame for the edited buffer.
+
+### Editor security boundary
+
+AaaU uses two distinct Unix sockets:
+
+| Socket | Ownership/mode | Accepted role |
+|---|---|---|
+| Human control socket | `root:<human-group>` `0660` | session, PTY, and exact-creator provider connections |
+| Editor request socket | `root:<agent-primary-group>` `0620` | exact configured agent UID; editor requests only |
+
+The agent is not a member of the human group, cannot use `NEW`, `SESSION`, PTY,
+or admin handshakes, and receives no sudo permission. Only UID 0 is Admin;
+authorized humans are Interactive. Provider registration additionally requires
+the exact session-creator UID—the random session ID alone is insufficient.
+
+The helper rejects missing, multiple, option-shaped, symlink, non-regular,
+oversized, and non-agent-owned buffers. It holds the validated descriptor across
+the request so a pathname swap cannot redirect copy-back. Paths are never sent
+to the operator, and the server never opens agent files as root. Frames, buffer
+size, errors, request count, and duration are bounded; editor traffic never
+shares or appears in PTY output. Audit entries contain request ID, operator,
+byte count, and outcome, never buffer contents.
+
 ## Protocol
 
 The client-server protocol uses a simple text-based format:
 
-### Client to Server
+### Human client to Server
 
 | Message | Description |
 |---------|-------------|
@@ -233,6 +301,11 @@ The client-server protocol uses a simple text-based format:
 | `\x01PING` | Keepalive ping |
 | `\x01GET_STATUS` | Query session status |
 | `\x01FORCE_KILL` | Admin: terminate session |
+
+The separate editor socket accepts only `EDITOR_REQUEST:<session-id>`. The
+human socket accepts `EDITOR_PROVIDER:<session-id>` only from the exact creator.
+Both editor roles then exchange bounded 4-byte big-endian length-prefixed JSON;
+buffer bytes are hex encoded so arbitrary binary content round-trips safely.
 
 ### Server to Client
 
@@ -292,8 +365,8 @@ Lwt_main.run (AaaU.Bridge.start server)
 
 Authentication is based on Unix socket credentials:
 - Client's UID/GID verified via `SO_PEERCRED`
-- User must be member of configured shared group
-- Root users (UID < 1000) get Admin permissions
+- Human users must be members of the configured human group; the agent must not be a member
+- Only root (UID 0) gets Admin permissions; all authorized humans are Interactive
 
 ### Audit Trail
 
@@ -332,7 +405,7 @@ bin/
 ## Limitations
 
 - Linux only (relies on Unix sockets, PTYs, and user isolation)
-- Requires root/sudo for user switching
+- The server runs as root for PTY user switching; the agent itself has no sudo
 - Some ioctl operations require C bindings (currently simplified)
 - GPU/graphics access requires additional setup
 

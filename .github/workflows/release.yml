@@ -35,14 +35,15 @@ jobs:
         run: opam install . --deps-only
 
       - name: Build binaries
-        run: opam exec -- dune build --release bin/server.exe bin/client.exe
+        run: opam exec -- dune build --release bin/server.exe bin/client.exe bin/editor.exe
 
       - name: Prepare release artifacts
         run: |
           mkdir -p release
-          archive_files=(aaau-server aaau)
+          archive_files=(aaau-server aaau aaau-editor)
           cp _build/default/bin/server.exe release/aaau-server
           cp _build/default/bin/client.exe release/aaau
+          cp _build/default/bin/editor.exe release/aaau-editor
           # Include systemd service and install script for Linux
           if [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
             cp contrib/aaau-server.service release/

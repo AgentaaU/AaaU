@@ -280,8 +280,8 @@ Two subcommands:
 ```bash
 sudo aaau-server init \
   -u agent \              # Agent user name (default: agent)
-  -g agent-shared \       # Shared group name (default: agent)
-  -s /var/run/aaau.sock \ # Socket path (default: /var/run/aaau.sock)
+  -g aaau-users \         # Human group name (default: aaau-users)
+  -s /var/run/aaau/server.sock \ # Socket path (default: /var/run/aaau/server.sock)
   -l /var/log/aaau \      # Log directory (default: /var/log/aaau)
   -h /home/agent           # Home directory (default: /home/agent)
   --shell /bin/false      # Login shell (default: /bin/false)
@@ -290,8 +290,8 @@ sudo aaau-server init \
 **run** - Start server:
 ```bash
 sudo aaau-server run \
-  -s /var/run/aaau.sock \ # Socket path
-  -g agent-shared \       # Authorized group
+  -s /var/run/aaau/server.sock \ # Socket path
+  -g aaau-users \         # Authorized human group
   -u agent \              # Agent user
   -l /var/log/aaau \      # Log directory
   -p /bin/bash \          # Default program (default: /bin/bash)
@@ -302,20 +302,20 @@ sudo aaau-server run \
 
 ```bash
 # Create new session
-aaau-client -s /var/run/aaau.sock
+aaau-client -s /var/run/aaau/server.sock
 
 # Create new session with specific program
-aaau-client -s /var/run/aaau.sock -p kimi-cli
+aaau-client -s /var/run/aaau/server.sock -p kimi-cli
 
 # Join existing session
-aaau-client -s /var/run/aaau.sock -n <session-id>
+aaau-client -s /var/run/aaau/server.sock -n <session-id>
 
 # Read-only mode
-aaau-client -s /var/run/aaau.sock -n <session-id> -r
+aaau-client -s /var/run/aaau/server.sock -n <session-id> -r
 ```
 
 **Client options:**
-- `-s, --socket` - Server socket path (default: /var/run/aaau.sock)
+- `-s, --socket` - Server socket path (default: /var/run/aaau/server.sock)
 - `-n, --session` - Session ID to join
 - `-r, --readonly` - Read-only mode (observe only)
 - `-p, --program` - Program to run for new session
@@ -433,10 +433,11 @@ let check_permission perm ~action =
 
 | Path | Owner | Permissions |
 |------|-------|-------------|
-| `/var/run/aaau.sock` | root:shared_group | 0660 |
-| `/var/run/aaau/` | root:shared_group | 0775 |
-| `/var/log/aaau/` | root:root | 1777 |
-| `/home/agent/` | agent:shared_group | 0755 |
+| `/var/run/aaau/server.sock` | root:human_group | 0660 |
+| `/var/run/aaau/editor.sock` | root:agent_group | 0620 |
+| `/var/run/aaau/` | root:human_group | 0755 |
+| `/var/log/aaau/` | root:root | 0750 |
+| `/home/agent/` | agent:agent | 0755 |
 
 ### Limitations
 
