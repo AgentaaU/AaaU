@@ -12,8 +12,9 @@ type client = {
 
 val create :
   session_id:string ->
-  creator:string ->
+  creator:Auth.user_info ->
   agent_user:string ->
+  editor_socket_path:string ->
   program:string ->
   args:string list ->
   rows:int ->
@@ -50,6 +51,23 @@ val shutdown : t -> unit Lwt.t
 val get_id : t -> string
 val get_clients : t -> client list
 val get_agent_pid : t -> int option
+
+val authorize_editor_provider : creator_uid:int -> Auth.user_info -> bool
+val authorize_editor_request :
+  agent_uid:int -> agent_session_id:int -> Auth.user_info -> peer_session_id:int -> bool
+val editor_request_authorized : t -> Auth.user_info -> peer_session_id:int -> bool
+
+val register_editor_provider :
+  t -> socket:Lwt_unix.file_descr -> user_info:Auth.user_info ->
+  (unit Lwt.t, string) result Lwt.t
+(** Register the creator's dedicated provider socket. The returned promise is
+    resolved when this provider is replaced or the session stops. *)
+
+val forward_editor_request :
+  t -> user_info:Auth.user_info -> peer_session_id:int -> string ->
+  Editor_protocol.response Lwt.t
+(** Submit one request from the configured agent account. Requests are
+    serialized and failures are returned without affecting the PTY. *)
 
 val compact_output_buffer : Buffer.t -> last_sent_pos:int -> int
 (** Compact the output history buffer when it grows too large.

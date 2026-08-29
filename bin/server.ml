@@ -6,11 +6,15 @@ open Cmdliner
 (* Common arguments *)
 let socket_path =
   let doc = "Unix socket path for client connections" in
-  Arg.(value & opt string "/var/run/aaau.sock" & info ["s"; "socket"] ~docv:"PATH" ~doc)
+  Arg.(value & opt string "/var/run/aaau/server.sock" & info ["s"; "socket"] ~docv:"PATH" ~doc)
+
+let editor_socket_path =
+  let doc = "Agent-only editor request socket path" in
+  Arg.(value & opt string "/var/run/aaau/editor.sock" & info ["editor-socket"] ~docv:"PATH" ~doc)
 
 let shared_group =
   let doc = "Group name for authorized users" in
-  Arg.(value & opt string "agent" & info ["g"; "group"] ~docv:"GROUP" ~doc)
+  Arg.(value & opt string "aaau-users" & info ["g"; "group"] ~docv:"GROUP" ~doc)
 
 let agent_user =
   let doc = "System user for running agents" in
@@ -31,7 +35,7 @@ let default_program =
 
 let lock_file =
   let doc = "Lock file path to prevent multiple instances" in
-  Arg.(value & opt string "/var/run/aaau.lock" & info ["lock-file"] ~docv:"PATH" ~doc)
+  Arg.(value & opt string "/var/run/aaau/aaau.lock" & info ["lock-file"] ~docv:"PATH" ~doc)
 
 (* Lock file management *)
 let lock_fd = ref None
@@ -94,7 +98,7 @@ let remove_lock_file path =
     try Unix.unlink path with _ -> ()
   end
 
-let run_server socket_path shared_group agent_user log_dir daemonize default_program lock_file_path =
+let run_server socket_path editor_socket_path shared_group agent_user log_dir daemonize default_program lock_file_path =
   (* Check for root privileges *)
   if Unix.getuid () <> 0 then begin
     Printf.eprintf "Error: Need root permission to run server.\n%!";
@@ -130,6 +134,7 @@ let run_server socket_path shared_group agent_user log_dir daemonize default_pro
   (* Create and start server *)
   let server = AaaU.Bridge.create
     ~socket_path
+    ~editor_socket_path
     ~shared_group
     ~agent_user
     ~log_dir
@@ -155,7 +160,7 @@ let run_server socket_path shared_group agent_user log_dir daemonize default_pro
 let run_cmd =
   let doc = "Run the server" in
   let info = Cmd.info "run" ~doc in
-  Cmd.v info Term.(const run_server $ socket_path $ shared_group $ agent_user $ log_dir $ daemonize $ default_program $ lock_file)
+  Cmd.v info Term.(const run_server $ socket_path $ editor_socket_path $ shared_group $ agent_user $ log_dir $ daemonize $ default_program $ lock_file)
 
 (* Init subcommand *)
 let home_dir =
@@ -226,9 +231,14 @@ let run_init agent_user shared_group socket_path log_dir home_dir shell =
   Printf.printf "\n[2/5] Checking agent user '%s'...\n%!" agent_user;
   if user_exists agent_user then begin
     Printf.printf "    User '%s' already exists.\n%!" agent_user;
-    (* Add user to shared group if not already *)
-    Printf.printf "    Adding user to group '%s'...\n%!" shared_group;
-    ignore (run_command "usermod" ["-aG"; shared_group; agent_user])
+    let account = Unix.getpwnam agent_user in
+    let human_gid = (Unix.getgrnam shared_group).Unix.gr_gid in
+    if account.Unix.pw_gid = human_gid then begin
+      Printf.eprintf "    ERROR: agent primary group must differ from human group '%s'.\n%!" shared_group;
+      exit_code := 1
+    end;
+    (* Remove legacy supplementary access to the human control group. *)
+    ignore (run_command "gpasswd" ["-d"; agent_user; shared_group])
   end else begin
     Printf.printf "    Creating user '%s'...\n%!" agent_user;
     (* Create parent directory for home if it doesn't exist *)
@@ -239,11 +249,11 @@ let run_init agent_user shared_group socket_path log_dir home_dir shell =
     (* Create home directory *)
     let home = Filename.concat home_dir agent_user in
     if run_command "useradd"
-         ["--system"; "--gid"; shared_group; "--home-dir"; home;
+         ["--system"; "--user-group"; "--home-dir"; home;
           "--shell"; shell; "--create-home"; agent_user] then begin
       Printf.printf "    User created successfully.\n%!";
       (* Set ownership of home directory *)
-      ignore (run_command "chown" [agent_user ^ ":" ^ shared_group; home])
+      ignore (run_command "chown" [agent_user ^ ":" ^ agent_user; home])
     end else begin
       Printf.eprintf "    ERROR: Failed to create user '%s'.\n%!" agent_user;
       exit_code := 1
@@ -258,12 +268,12 @@ let run_init agent_user shared_group socket_path log_dir home_dir shell =
   else begin
     if run_command "mkdir" ["-p"; socket_dir] then begin
       Printf.printf "    Directory created.\n%!";
-      (* Set permissions: root:shared_group 775 *)
+      (* Socket nodes enforce access; directory traversal is public. *)
       if group_exists shared_group then begin
         let gid = (Unix.getgrnam shared_group).Unix.gr_gid in
         Unix.chown socket_dir 0 gid;
-        Unix.chmod socket_dir 0o775;
-        Printf.printf "    Permissions set (root:%s 775).\n%!" shared_group
+        Unix.chmod socket_dir 0o755;
+        Printf.printf "    Permissions set (root:%s 755).\n%!" shared_group
       end
     end else begin
       Printf.eprintf "    ERROR: Failed to create directory '%s'.\n%!" socket_dir;
@@ -278,35 +288,25 @@ let run_init agent_user shared_group socket_path log_dir home_dir shell =
   else begin
     if run_command "mkdir" ["-p"; log_dir] then begin
       Printf.printf "    Directory created.\n%!";
-      (* Audit output can contain prompts and agent output.  Keep it writable
-         only by the service account instead of allowing arbitrary local users
-         to create files in the log directory. *)
-      if group_exists shared_group then begin
-        let gid = (Unix.getgrnam shared_group).Unix.gr_gid in
-        Unix.chown log_dir 0 gid;
-        Unix.chmod log_dir 0o750;
-        Printf.printf "    Permissions set (root:%s 750).\n%!" shared_group
-      end
+      Unix.chmod log_dir 0o750;
+      Printf.printf "    Permissions set (root-only writes, 0750).\n%!"
     end else begin
       Printf.eprintf "    ERROR: Failed to create directory '%s'.\n%!" log_dir;
       exit_code := 1
     end
   end;
   
-  (* Step 5: Verify sudoers access for agent user *)
-  Printf.printf "\n[5/5] Checking sudo configuration...\n%!";
-  Printf.printf "    NOTE: Ensure '%s' can run commands as other users.\n%!" agent_user;
-  Printf.printf "    You may need to add this to /etc/sudoers:\n%!";
-  Printf.printf "        %s ALL=(ALL) NOPASSWD: /bin/bash, /bin/sh, /usr/bin/env\n%!" agent_user;
+  (* Step 5: State the isolation invariant. *)
+  Printf.printf "\n[5/5] Agent isolation configured.\n%!";
+  Printf.printf "    '%s' is not granted human-group membership or sudo access.\n%!" agent_user;
   
   (* Summary *)
   Printf.printf "\n=== Initialization %s ===\n%!" 
     (if !exit_code = 0 then "Complete" else "Failed");
   Printf.printf "\nNext steps:\n%!";
-  Printf.printf "  1. Review and configure sudoers if needed\n%!";
-  Printf.printf "  2. Add human users to group '%s':\n%!" shared_group;
+  Printf.printf "  1. Add human users to group '%s':\n%!" shared_group;
   Printf.printf "       usermod -aG %s <username>\n%!" shared_group;
-  Printf.printf "  3. Run the server:\n%!";
+  Printf.printf "  2. Run the server:\n%!";
   Printf.printf "       aaau-server run\n%!";
   
   exit !exit_code

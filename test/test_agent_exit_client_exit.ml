@@ -21,8 +21,8 @@ let test_agent_exit_client_exit () =
   (* Create server *)
   let server = AaaU.Bridge.create
     ~socket_path
-    ~shared_group:(try Unix.getenv "USER" with _ -> "nogroup")
-    ~agent_user:(try Unix.getenv "USER" with _ -> "nobody")
+    ~shared_group:"root"
+    ~agent_user:"daemon"
     ~log_dir
     ~default_program:"/bin/sh"
     ~default_args:["-c"; "echo 'Hello from agent'; sleep 1; echo 'Agent exiting'; exit 0"]

@@ -7,7 +7,7 @@ let write_all = AaaU.Client_io.write_all
 
 let socket_path =
   let doc = "Server socket path" in
-  Arg.(value & opt string "/var/run/aaau.sock" & info ["s"; "socket"] ~docv:"PATH" ~doc)
+  Arg.(value & opt string "/var/run/aaau/server.sock" & info ["s"; "socket"] ~docv:"PATH" ~doc)
 
 let session_id =
   let doc = "Existing session ID to join" in
@@ -16,6 +16,14 @@ let session_id =
 let readonly =
   let doc = "Read-only mode" in
   Arg.(value & flag & info ["r"; "readonly"] ~doc)
+
+let no_editor_forwarding =
+  let doc = "Disable the creator-side editor provider" in
+  Arg.(value & flag & info ["no-editor-forwarding"] ~doc)
+
+let editor_command =
+  let doc = "Local editor provider command (parsed as argv; never run through a shell)" in
+  Arg.(value & opt string "emacsclient" & info ["editor-command"] ~docv:"COMMAND" ~doc)
 
 let program =
   let doc = "Program to run as agent (e.g., kimi-cli, /bin/bash)" in
@@ -40,7 +48,65 @@ let get_terminal_size () =
 (* Global reference for socket to send resize events *)
 let socket_ref = ref None
 
-let rec run_client_lwt socket_path session_id readonly program program_alias =
+let editor_provider_loop socket command =
+  let rec loop () =
+    let* payload = AaaU.Editor_protocol.read_frame socket in
+    match payload with
+    | Error _ -> Lwt.return_unit
+    | Ok payload ->
+      begin match AaaU.Editor_protocol.request_of_string payload with
+      | Error _ -> Lwt.return_unit
+      | Ok request ->
+        let editing =
+          let* response = AaaU.Editor_provider.handle_request ~command request in
+          Lwt.return (`Edited response)
+        in
+        let disconnected =
+          Lwt.catch
+            (fun () ->
+              let* () = Lwt_unix.wait_read socket in
+              let buffer = Bytes.create 1 in
+              let* _ = Lwt_unix.read socket buffer 0 1 in
+              Lwt.return `Disconnected)
+            (fun _ -> Lwt.return `Disconnected)
+        in
+        let* outcome = Lwt.pick [editing; disconnected] in
+        begin match outcome with
+        | `Disconnected -> Lwt.return_unit
+        | `Edited response ->
+          let* written = AaaU.Editor_protocol.write_frame socket (AaaU.Editor_protocol.response_to_string response) in
+          begin match written with Ok () -> loop () | Error _ -> Lwt.return_unit end
+        end
+      end
+  in
+  Lwt.finalize loop (fun () -> Lwt.catch (fun () -> Lwt_unix.close socket) (fun _ -> Lwt.return_unit))
+
+let start_editor_provider socket_path session_id command =
+  let socket = Lwt_unix.socket Unix.PF_UNIX Unix.SOCK_STREAM 0 in
+  Lwt.catch
+    (fun () ->
+      let* () = Lwt_unix.connect socket (Unix.ADDR_UNIX socket_path) in
+      let handshake = "EDITOR_PROVIDER:" ^ session_id ^ "\n" in
+      let* () = write_all socket handshake in
+      let* response = AaaU.Client_io.read_handshake_response socket in
+      match response with
+      | AaaU.Client_io.Response (line, "") when line = "EDITOR_PROVIDER:" ^ session_id ->
+        Lwt.async (fun () -> editor_provider_loop socket command);
+        Lwt.return_some socket
+      | AaaU.Client_io.Response (line, _) ->
+        Printf.eprintf "Editor forwarding unavailable: %s\n%!" line;
+        let* () = Lwt_unix.close socket in
+        Lwt.return_none
+      | AaaU.Client_io.Timeout ->
+        Printf.eprintf "Editor provider handshake timed out\n%!";
+        let* () = Lwt_unix.close socket in
+        Lwt.return_none)
+    (fun exn ->
+      Printf.eprintf "Editor forwarding unavailable: %s\n%!" (Printexc.to_string exn);
+      let* () = Lwt.catch (fun () -> Lwt_unix.close socket) (fun _ -> Lwt.return_unit) in
+      Lwt.return_none)
+
+let rec run_client_lwt socket_path session_id readonly program program_alias no_editor_forwarding editor_command =
   Sys.set_signal Sys.sigpipe Sys.Signal_ignore;
   let requested_program =
     match (program, program_alias) with
@@ -50,6 +116,7 @@ let rec run_client_lwt socket_path session_id readonly program program_alias =
     | None, Some alias -> Ok (AaaU.Command_line.expand_program_alias alias)
     | None, None -> Ok None
   in
+  let editor_spec = AaaU.Command_line.split_command editor_command in
   let program_spec =
     match requested_program with
     | Error e -> Error e
@@ -59,11 +126,14 @@ let rec run_client_lwt socket_path session_id readonly program program_alias =
       | Ok (prog, args) -> Ok (Some (prog, args))
       | Error e -> Error e
   in
-  match program_spec with
-  | Error e ->
+  match program_spec, editor_spec with
+  | Error e, _ ->
     Printf.eprintf "Invalid program string: %s\n%!" e;
     Lwt.return_unit
-  | Ok program_spec ->
+  | _, Error e ->
+    Printf.eprintf "Invalid editor command: %s\n%!" e;
+    Lwt.return_unit
+  | Ok program_spec, Ok editor_spec ->
   (* Connect to server *)
   let socket = Lwt_unix.socket Unix.PF_UNIX Unix.SOCK_STREAM 0 in
   let* () = Lwt_unix.connect socket (Unix.ADDR_UNIX socket_path) in
@@ -103,11 +173,18 @@ let rec run_client_lwt socket_path session_id readonly program program_alias =
     Lwt.return_unit
   | AaaU.Client_io.Response (handshake_line, initial_output) ->
     if String.starts_with ~prefix:"SESSION:" handshake_line then begin
+      let connected_session_id = String.sub handshake_line 8 (String.length handshake_line - 8) in
+      let is_creator = Option.is_none session_id in
+      let* provider_socket =
+        if is_creator && not readonly && not no_editor_forwarding then
+          start_editor_provider socket_path connected_session_id editor_spec
+        else Lwt.return_none
+      in
       (* Connected successfully, enter interactive mode *)
       if readonly then
         run_readonly socket ~initial_output
       else
-        run_interactive socket ~initial_output
+        run_interactive socket ~initial_output ~provider_socket
     end else begin
       (* Print error and exit *)
       Printf.eprintf "Server error: %s\n%!" handshake_line;
@@ -133,7 +210,7 @@ and run_readonly socket ~initial_output =
   in
   loop ()
 
-and run_interactive socket ~initial_output =
+and run_interactive socket ~initial_output ~provider_socket =
   (* Save original terminal attributes *)
   let old_tty = Unix.tcgetattr Unix.stdin in
   
@@ -320,7 +397,8 @@ and run_interactive socket ~initial_output =
     (* Restore terminal attributes *)
     Unix.tcsetattr Unix.stdin Unix.TCSAFLUSH old_tty;
     (* Restore default SIGWINCH handler *)
-    Sys.set_signal Sys.sigwinch Signal_default
+    Sys.set_signal Sys.sigwinch Signal_default;
+    Option.iter (fun fd -> Lwt.async (fun () -> Lwt.catch (fun () -> Lwt_unix.close fd) (fun _ -> Lwt.return_unit))) provider_socket
   in
 
   (* Run all threads concurrently using Lwt.async *)
@@ -349,7 +427,7 @@ and run_interactive socket ~initial_output =
 let cmd =
   let doc = "Agent-as-User Bridge Client" in
   let info = Cmd.info "aaau-client" ~version:"0.1.0" ~doc in
-  Cmd.v info Term.(const (fun a b c d e -> Lwt_main.run (run_client_lwt a b c d e))
-    $ socket_path $ session_id $ readonly $ program $ program_alias)
+  Cmd.v info Term.(const (fun a b c d e f g -> Lwt_main.run (run_client_lwt a b c d e f g))
+    $ socket_path $ session_id $ readonly $ program $ program_alias $ no_editor_forwarding $ editor_command)
 
 let () = exit (Cmd.eval cmd)

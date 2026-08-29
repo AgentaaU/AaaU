@@ -17,6 +17,34 @@ struct aaau_peercred {
   gid_t gid;
 };
 
+/* Return the kernel session of the peer process captured by SO_PEERCRED.
+   The editor socket is Linux-only: UID authentication alone is insufficient
+   because all agent sessions deliberately share one service account. */
+CAMLprim value aaau_get_peer_session_id(value v_fd)
+{
+  CAMLparam1(v_fd);
+#if defined(__linux__)
+  int fd = Int_val(v_fd);
+  struct ucred linux_cred;
+  socklen_t cred_len = sizeof(linux_cred);
+
+  if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &linux_cred, &cred_len) == -1) {
+    uerror("getsockopt", Nothing);
+  }
+  if (cred_len < sizeof(linux_cred)) {
+    caml_failwith("getsockopt(SO_PEERCRED) returned a short credential struct");
+  }
+  pid_t sid = getsid(linux_cred.pid);
+  if (sid == (pid_t)-1) {
+    uerror("getsid", Nothing);
+  }
+  CAMLreturn(Val_int(sid));
+#else
+  caml_failwith("agent editor sockets require Linux SO_PEERCRED session IDs");
+  CAMLreturn(Val_int(-1));
+#endif
+}
+
 CAMLprim value aaau_get_peer_credentials(value v_fd)
 {
   CAMLparam1(v_fd);

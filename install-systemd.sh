@@ -16,6 +16,7 @@ fi
 echo "Installing aaau-server binary..."
 install -Dm755 "${SCRIPT_DIR}/_build/default/bin/server.exe" /usr/local/bin/aaau-server
 install -Dm755 "${SCRIPT_DIR}/_build/default/bin/client.exe" /usr/local/bin/aaau-client
+install -Dm755 "${SCRIPT_DIR}/_build/default/bin/editor.exe" /usr/local/bin/aaau-editor
 
 # Install systemd service
 echo "Installing systemd service..."
