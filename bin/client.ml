@@ -47,6 +47,8 @@ let get_terminal_size () =
 
 (* Global reference for socket to send resize events *)
 let socket_ref = ref None
+let active_socket_path = ref None
+let client_failed = ref false
 
 let editor_provider_loop socket command =
   let rec loop () =
@@ -106,7 +108,7 @@ let start_editor_provider socket_path session_id command =
       let* () = Lwt.catch (fun () -> Lwt_unix.close socket) (fun _ -> Lwt.return_unit) in
       Lwt.return_none)
 
-let rec run_client_lwt socket_path session_id readonly program program_alias no_editor_forwarding editor_command =
+let rec run_client_lwt_inner socket_path session_id readonly program program_alias no_editor_forwarding editor_command =
   Sys.set_signal Sys.sigpipe Sys.Signal_ignore;
   let requested_program =
     match (program, program_alias) with
@@ -424,10 +426,43 @@ and run_interactive socket ~initial_output ~provider_socket =
       cleanup ();
       Lwt.fail e)
 
+let run_client_lwt socket_path session_id readonly program program_alias no_editor_forwarding editor_command =
+  active_socket_path := Some socket_path;
+  Lwt.catch
+    (fun () ->
+      run_client_lwt_inner socket_path session_id readonly program program_alias
+        no_editor_forwarding editor_command)
+    (fun exn ->
+      client_failed := true;
+      socket_ref := None;
+      let path = Option.value !active_socket_path ~default:"/var/run/aaau/server.sock" in
+      begin match exn with
+      | Unix.Unix_error (Unix.ENOENT, "connect", _) ->
+        Printf.eprintf
+          "Cannot connect to AaaU server: socket %s does not exist.\n\
+           Start it with `sudo aaau-server run -s %s`, or pass the correct socket with -s.\n%!"
+          path path
+      | Unix.Unix_error (Unix.ECONNREFUSED, "connect", _) ->
+        Printf.eprintf
+          "Cannot connect to AaaU server at %s: connection refused.\n\
+           Check that aaau-server is running and recreate any stale socket.\n%!"
+          path
+      | Unix.Unix_error ((Unix.EACCES | Unix.EPERM), "connect", _) ->
+        Printf.eprintf
+          "Cannot connect to AaaU server at %s: permission denied.\n\
+           Verify that your account belongs to the configured AaaU shared group.\n%!"
+          path
+      | _ ->
+        Printf.eprintf "aaau-client failed: %s\n%!" (Printexc.to_string exn)
+      end;
+      Lwt.return_unit)
+
 let cmd =
   let doc = "Agent-as-User Bridge Client" in
   let info = Cmd.info "aaau-client" ~version:"0.1.0" ~doc in
   Cmd.v info Term.(const (fun a b c d e f g -> Lwt_main.run (run_client_lwt a b c d e f g))
     $ socket_path $ session_id $ readonly $ program $ program_alias $ no_editor_forwarding $ editor_command)
 
-let () = exit (Cmd.eval cmd)
+let () =
+  let status = Cmd.eval cmd in
+  exit (if !client_failed then 1 else status)
