@@ -5,7 +5,9 @@ After=network.target
 Wants=network.target
 
 [Service]
-Type=notify
+# aaau-server does not use sd_notify(3), so systemd should track its main PID
+# directly instead of waiting for a readiness notification.
+Type=simple
 ExecStart=/usr/local/bin/aaau-server run --lock-file /var/run/aaau/aaau.lock
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
@@ -29,9 +31,10 @@ ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
 
-# Allow PTY and socket operations
-CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SETUID CAP_SETGID CAP_AUDIT_WRITE
-AmbientCapabilities=CAP_SYS_ADMIN CAP_SETUID CAP_SETGID CAP_AUDIT_WRITE
+# CAP_CHOWN is required when setting the owner/group of the two Unix sockets.
+# The other capabilities are required for PTY management and user switching.
+CapabilityBoundingSet=CAP_CHOWN CAP_SYS_ADMIN CAP_SETUID CAP_SETGID CAP_AUDIT_WRITE
+AmbientCapabilities=CAP_CHOWN CAP_SYS_ADMIN CAP_SETUID CAP_SETGID CAP_AUDIT_WRITE
 
 # Socket and lock file directory access
 ReadWritePaths=/var/run/aaau /var/log/aaau /var/lib/agents

@@ -120,9 +120,13 @@ dune build
 ### Install
 
 ```bash
-sudo cp _build/install/default/bin/aaau-server /usr/local/bin/
-sudo cp _build/install/default/bin/aaau /usr/local/bin/
-sudo cp _build/install/default/bin/aaau-editor /usr/local/bin/
+# Installs the already-built aaau-server, aaau-client, and aaau-editor,
+# installs the systemd unit, and initializes the default AaaU user and directories.
+sudo ./install.sh install
+
+# Later, remove installed binaries and the service. This preserves accounts
+# and audit logs so that session data is not removed unexpectedly.
+sudo ./install.sh uninstall
 ```
 
 ## Setup
