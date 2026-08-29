@@ -16,19 +16,8 @@ type t = {
   log_dir : string;
   mutable buffer : record list;
   buffer_lock : Lwt_mutex.t;
-  flush_cond : unit Lwt_condition.t;
+  mutable closed : bool;
 }
-
-let create ~log_dir =
-  let () =
-    try Unix.mkdir log_dir 0o755 with Unix.Unix_error _ -> ()
-  in
-  {
-    log_dir;
-    buffer = [];
-    buffer_lock = Lwt_mutex.create ();
-    flush_cond = Lwt_condition.create ();
-  }
 
 let record_to_json r : Yojson.Safe.t =
   `Assoc [
@@ -50,13 +39,9 @@ let log t record =
 let flush_to_disk t =
   let* records = Lwt_mutex.with_lock t.buffer_lock (fun () ->
     let records = List.rev t.buffer in
-    t.buffer <- [];
-    Lwt.return records
-  ) in
-  let* () =
-    if List.length records = 0 then
+    if records = [] then
       Lwt.return_unit
-    else
+    else begin
       let time = Unix.time () in
       let tm = Unix.localtime time in
       let date = Printf.sprintf "%04d-%02d-%02d"
@@ -67,16 +52,47 @@ let flush_to_disk t =
       in
       let content = String.concat "\n" lines ^ "\n" in
       let flags = [Unix.O_WRONLY; Unix.O_CREAT; Unix.O_APPEND] in
-      let* fd = Lwt_unix.openfile log_file flags 0o644 in
+      let* fd = Lwt_unix.openfile log_file flags 0o640 in
       let oc = Lwt_io.of_fd ~mode:Lwt_io.output fd in
-      let* () = Lwt_io.write oc content in
-      Lwt_io.close oc
+      let* () = Lwt.finalize
+        (fun () -> Lwt_io.write oc content)
+        (fun () -> Lwt_io.close oc) in
+      (* Only discard records after a complete successful write. *)
+      t.buffer <- [];
+      Lwt.return_unit
+    end
+  ) in
+  Lwt.return records
+
+let rec flush_loop t =
+  let* () = Lwt_unix.sleep 5.0 in
+  if t.closed then
+    Lwt.return_unit
+  else
+    let* () =
+      Lwt.catch
+        (fun () -> flush_to_disk t)
+        (fun e ->
+          Logs_lwt.err (fun m -> m "Audit flush failed: %s" (Printexc.to_string e)))
+    in
+    flush_loop t
+
+let create ~log_dir =
+  let () =
+    try Unix.mkdir log_dir 0o755 with Unix.Unix_error _ -> ()
   in
-  Lwt.return_unit
+  let t = {
+    log_dir;
+    buffer = [];
+    buffer_lock = Lwt_mutex.create ();
+    closed = false;
+  } in
+  Lwt.async (fun () -> flush_loop t);
+  t
 
 let flush t =
-  Lwt_condition.signal t.flush_cond ();
   flush_to_disk t
 
 let close t =
+  t.closed <- true;
   flush_to_disk t

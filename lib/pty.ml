@@ -88,10 +88,13 @@ let set_raw_mode fd =
 
 (* Set terminal size using ioctl *)
 let set_terminal_size fd ~rows ~cols =
-  try
-    let fd_int = fd_to_int fd in
-    set_winsize fd_int rows cols
-  with _ -> ()
+  (* struct winsize uses unsigned short fields.  Reject invalid values before
+     crossing the C boundary rather than allowing negative integers to wrap. *)
+  if rows > 0 && rows <= 1000 && cols > 0 && cols <= 1000 then
+    try
+      let fd_int = fd_to_int fd in
+      set_winsize fd_int rows cols
+    with _ -> ()
 
 (* Get terminal size *)
 let get_terminal_size fd =

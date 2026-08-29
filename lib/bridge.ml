@@ -119,7 +119,11 @@ let parse_new_json payload =
     in
     begin
       match find_string "program", find_args (), find_int "rows", find_int "cols" with
-      | Ok program, Ok args, Ok rows, Ok cols -> Ok (program, args, rows, cols)
+      | Ok program, Ok args, Ok rows, Ok cols
+        when rows > 0 && rows <= 1000 && cols > 0 && cols <= 1000 ->
+        Ok (program, args, rows, cols)
+      | Ok _, Ok _, Ok _, Ok _ ->
+        Error "Terminal dimensions must be between 1 and 1000"
       | Error e, _, _, _
       | _, Error e, _, _
       | _, _, Error e, _
@@ -281,12 +285,15 @@ let handle_client t client_fd addr =
             (* Main loop: forward client input with framing *)
             let recv_buffer = ref initial_buffer in
             let rec parse_messages () =
-              match Protocol.try_parse_framed !recv_buffer with
-              | None -> Lwt.return_unit
-              | Some (msg, remaining) ->
-                recv_buffer := remaining;
-                let* () = Session.handle_client_input session ~client ~data:msg in
-                parse_messages ()
+              if String.length !recv_buffer > Protocol.max_frame_size + 4 then
+                Lwt.fail_with "Client frame exceeds maximum size"
+              else
+                match Protocol.try_parse_framed !recv_buffer with
+                | None -> Lwt.return_unit
+                | Some (msg, remaining) ->
+                  recv_buffer := remaining;
+                  let* () = Session.handle_client_input session ~client ~data:msg in
+                  parse_messages ()
             in
             let rec loop () =
               if not t.running then

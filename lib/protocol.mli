@@ -30,6 +30,9 @@ val decode_server : string -> server_message
 val is_control : string -> bool
 (** Check if it's a control message (starts with \x01) *)
 
+val max_frame_size : int
+(** Maximum payload size accepted in one framed client message. *)
+
 val frame_message : string -> string
 (** Add length framing to a message: 4-byte length prefix + message *)
 

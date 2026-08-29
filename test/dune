@@ -141,6 +141,11 @@
  (libraries AaaU))
 
 (test
+ (name test_protocol_framing)
+ (modules test_protocol_framing)
+ (libraries AaaU))
+
+(test
  (name test_editor_protocol)
  (modules test_editor_protocol)
  (libraries AaaU))
