@@ -2,29 +2,41 @@
 
 open Lwt.Syntax
 
+let human_socket_mode = 0o660
+let editor_socket_mode = 0o620
+let human_peer_allowed ~agent_uid user = user.Auth.uid <> agent_uid
+let groups_are_isolated ~agent_gid ~human_gid ~agent_username ~human_members =
+  agent_gid <> human_gid && not (Array.exists (( = ) agent_username) human_members)
+
 type t = {
   socket_path : string;
+  editor_socket_path : string;
   shared_group : string;
   agent_user : string;
   default_program : string;
   default_args : string list;
 
   mutable server_socket : Lwt_unix.file_descr option;
+  mutable editor_server_socket : Lwt_unix.file_descr option;
   audit : Audit.t;
   sessions : (string, Session.t) Hashtbl.t;
   sessions_lock : Lwt_mutex.t;
   mutable running : bool;
 }
 
-let create ~socket_path ~shared_group ~agent_user ~log_dir ?(default_program="/bin/bash") ?(default_args=["-l"]) () =
+let create ~socket_path ?editor_socket_path ~shared_group ~agent_user ~log_dir ?(default_program="/bin/bash") ?(default_args=["-l"]) () =
+  let editor_socket_path = Option.value editor_socket_path ~default:(socket_path ^ ".editor") in
+  if socket_path = editor_socket_path then invalid_arg "Human and editor sockets must be distinct";
   let audit = Audit.create ~log_dir in
   {
     socket_path;
+    editor_socket_path;
     shared_group;
     agent_user;
     default_program;
     default_args;
     server_socket = None;
+    editor_server_socket = None;
     audit;
     sessions = Hashtbl.create 100;
     sessions_lock = Lwt_mutex.create ();
@@ -32,6 +44,13 @@ let create ~socket_path ~shared_group ~agent_user ~log_dir ?(default_program="/b
   }
 
 let setup_socket t =
+  let human_group = Unix.getgrnam t.shared_group in
+  let agent_account = Unix.getpwnam t.agent_user in
+  if agent_account.Unix.pw_uid = 0 then invalid_arg "Configured agent must not be root";
+  if not (groups_are_isolated ~agent_gid:agent_account.Unix.pw_gid
+            ~human_gid:human_group.Unix.gr_gid ~agent_username:t.agent_user
+            ~human_members:human_group.Unix.gr_mem) then
+    invalid_arg "Configured agent must not belong to the human control group";
   (* Clean up old socket *)
   (try Unix.unlink t.socket_path with _ -> ());
 
@@ -46,16 +65,33 @@ let setup_socket t =
   let* () = Lwt.return_unit in
 
   (* Set permissions *)
-  let gid = (Unix.getgrnam t.shared_group).Unix.gr_gid in
+  let gid = human_group.Unix.gr_gid in
   Unix.chown t.socket_path 0 gid;
-  Unix.chmod t.socket_path 0o660;
+  Unix.chmod t.socket_path human_socket_mode;
 
   t.server_socket <- Some socket;
 
   Logs_lwt.info (fun m -> m "Server listening on %s" t.socket_path)
 
+let setup_editor_socket t =
+  (try Unix.unlink t.editor_socket_path with _ -> ());
+  let dir = Filename.dirname t.editor_socket_path in
+  (try Unix.mkdir dir 0o755 with Unix.Unix_error _ -> ());
+  let socket = Lwt_unix.socket Unix.PF_UNIX Unix.SOCK_STREAM 0 in
+  let* () = Lwt_unix.bind socket (Unix.ADDR_UNIX t.editor_socket_path) in
+  Lwt_unix.listen socket 5;
+  let account = Unix.getpwnam t.agent_user in
+  Unix.chown t.editor_socket_path 0 account.Unix.pw_gid;
+  Unix.chmod t.editor_socket_path editor_socket_mode;
+  t.editor_server_socket <- Some socket;
+  Logs_lwt.info (fun m -> m "Agent editor requests listening on %s" t.editor_socket_path)
+
 let authenticate_client t client_fd =
-  Lwt.return (Auth.authenticate_socket (Lwt_unix.unix_file_descr client_fd) ~shared_group:t.shared_group)
+  let result = Auth.authenticate_socket (Lwt_unix.unix_file_descr client_fd) ~shared_group:t.shared_group in
+  let agent_uid = (Unix.getpwnam t.agent_user).Unix.pw_uid in
+  Lwt.return (match result with
+    | Ok user when not (human_peer_allowed ~agent_uid user) -> Error "Agent account is denied on the human control socket"
+    | other -> other)
 
 let parse_new_json payload =
   match Yojson.Safe.from_string payload with
@@ -99,7 +135,24 @@ let handle_handshake t client_fd user_info =
   | Client_io.Timeout_line ->
     Lwt.return_error "Connection timed out"
   | Client_io.Line (msg, remaining) ->
-    if String.starts_with ~prefix:"SESSION:" msg then
+    if String.starts_with ~prefix:"EDITOR_PROVIDER:" msg then
+      let session_id = String.sub msg 16 (String.length msg - 16) in
+      if remaining <> "" then Lwt.return_error "Unexpected bytes after editor provider handshake"
+      else
+        let* session = Lwt_mutex.with_lock t.sessions_lock (fun () -> Lwt.return (Hashtbl.find_opt t.sessions session_id)) in
+        begin match session with
+        | None -> Lwt.return_error (Printf.sprintf "Session %s not found" session_id)
+        | Some session ->
+          let* registered = Session.register_editor_provider session ~socket:client_fd ~user_info in
+          begin match registered with
+          | Error _ as error -> Lwt.return error
+          | Ok stopped ->
+            let response = Printf.sprintf "EDITOR_PROVIDER:%s\n" session_id in
+            let* () = Client_io.write_all client_fd response in
+            Lwt.return_ok (`Dedicated stopped)
+          end
+        end
+    else if String.starts_with ~prefix:"SESSION:" msg then
       let session_id = String.sub msg 8 (String.length msg - 8) in
       Lwt_mutex.with_lock t.sessions_lock (fun () ->
         match Hashtbl.find_opt t.sessions session_id with
@@ -115,7 +168,7 @@ let handle_handshake t client_fd user_info =
       | Error e -> Lwt.return_error e
       | Ok (program, args, rows, cols) ->
         let session_id = Uuidm.v4_gen (Random.State.make_self_init ()) () |> Uuidm.to_string in
-        let* result = Session.create ~session_id ~creator:user_info.Auth.username ~agent_user:t.agent_user
+        let* result = Session.create ~session_id ~creator:user_info ~agent_user:t.agent_user ~editor_socket_path:t.editor_socket_path
           ~program ~args ~rows ~cols ~audit:t.audit in
         match result with
         | Error e -> Lwt.return_error e
@@ -169,7 +222,7 @@ let handle_handshake t client_fd user_info =
           (t.default_program, t.default_args, 24, 80)
       in
       let session_id = Uuidm.v4_gen (Random.State.make_self_init ()) () |> Uuidm.to_string in
-      let* result = Session.create ~session_id ~creator:user_info.Auth.username ~agent_user:t.agent_user 
+      let* result = Session.create ~session_id ~creator:user_info ~agent_user:t.agent_user ~editor_socket_path:t.editor_socket_path
         ~program ~args ~rows ~cols ~audit:t.audit in
       match result with
       | Error e -> Lwt.return_error e
@@ -206,6 +259,7 @@ let handle_client t client_fd addr =
         | Error e ->
           let* _ = Lwt_unix.write_string client_fd (e ^ "\n") 0 (String.length e + 1) in
           Lwt_unix.close client_fd
+        | Ok (`Dedicated work) -> work
         | Ok (`Existing _ | `New _ as handshake_result') ->
           let session, initial_buffer =
             match handshake_result' with
@@ -292,6 +346,57 @@ let rec accept_loop t =
 
       accept_loop t
 
+let handle_editor_client t client_fd =
+  let close () = Lwt.catch (fun () -> Lwt_unix.close client_fd) (fun _ -> Lwt.return_unit) in
+  let fail message =
+    let* () = Lwt.catch (fun () -> Client_io.write_all client_fd (message ^ "\n")) (fun _ -> Lwt.return_unit) in
+    close ()
+  in
+  match Auth.authenticate_agent_socket (Lwt_unix.unix_file_descr client_fd) ~agent_user:t.agent_user with
+  | Error message -> fail ("Auth failed: " ^ message)
+  | Ok (user_info, peer_session_id) ->
+    Lwt.catch
+      (fun () ->
+        let* line = Client_io.read_line_with_remainder ~timeout:5.0 client_fd in
+        match line with
+        | Client_io.Line (message, "") when String.starts_with ~prefix:"EDITOR_REQUEST:" message ->
+          let session_id = String.sub message 15 (String.length message - 15) in
+          let* session = Lwt_mutex.with_lock t.sessions_lock (fun () -> Lwt.return (Hashtbl.find_opt t.sessions session_id)) in
+          begin match session with
+          | None -> fail (Printf.sprintf "Session %s not found" session_id)
+          | Some session when not (Session.editor_request_authorized session user_info ~peer_session_id) ->
+            fail "Agent process does not belong to this session"
+          | Some session ->
+            let* () = Client_io.write_all client_fd ("EDITOR_REQUEST:" ^ session_id ^ "\n") in
+            let* payload = Editor_protocol.read_frame ~timeout:5.0 client_fd in
+            let* response = match payload with
+              | Error message -> Lwt.return { Editor_protocol.request_id = "invalid"; status = 64; error = Some message; content = None }
+              | Ok payload ->
+                begin match Editor_protocol.request_of_string payload with
+                | Error message -> Lwt.return { Editor_protocol.request_id = "invalid"; status = 64; error = Some message; content = None }
+                | Ok request ->
+                  Session.forward_editor_request session ~user_info ~peer_session_id
+                    request.Editor_protocol.content
+                end
+            in
+            let* _ = Editor_protocol.write_frame client_fd (Editor_protocol.response_to_string response) in
+            close ()
+          end
+        | Client_io.Timeout_line -> fail "Connection timed out"
+        | Client_io.End_of_file -> close ()
+        | Client_io.Line _ -> fail "Editor socket accepts only EDITOR_REQUEST"
+      )
+      (fun exn -> fail ("Editor request error: " ^ Printexc.to_string exn))
+
+let rec accept_editor_loop t =
+  if not t.running then Lwt.return_unit
+  else match t.editor_server_socket with
+    | None -> Lwt.return_unit
+    | Some socket ->
+      let* client_fd, _ = Lwt_unix.accept socket in
+      Lwt.async (fun () -> handle_editor_client t client_fd);
+      accept_editor_loop t
+
 let cleanup_sessions t =
   let rec loop () =
     let* () = Lwt_unix.sleep 60.0 in
@@ -320,11 +425,14 @@ let cleanup_sessions t =
   loop ()
 
 let start t =
+  Sys.set_signal Sys.sigpipe Sys.Signal_ignore;
   let* () = setup_socket t in
+  let* () = setup_editor_socket t in
   t.running <- true;
 
   (* Start cleanup coroutine *)
   Lwt.async (fun () -> cleanup_sessions t);
+  Lwt.async (fun () -> accept_editor_loop t);
 
   (* Main accept loop *)
   accept_loop t
@@ -334,6 +442,9 @@ let stop t =
 
   (* Close socket *)
   (match t.server_socket with
+   | Some s -> Lwt.async (fun () -> Lwt_unix.close s)
+   | None -> ());
+  (match t.editor_server_socket with
    | Some s -> Lwt.async (fun () -> Lwt_unix.close s)
    | None -> ());
 

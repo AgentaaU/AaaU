@@ -47,6 +47,13 @@ type client = {
   mutable last_activity : float;
 }
 
+type editor_provider = {
+  socket : Lwt_unix.file_descr;
+  token : string;
+  stopped : unit Lwt.t;
+  stop : unit Lwt.u;
+}
+
 type session = {
   session_id : string;
   audit : Audit.t;
@@ -54,6 +61,8 @@ type session = {
   (* PTY *)
   pty : Pty.t;
   agent_pid : int;
+  creator : Auth.user_info;
+  agent_uid : int;
 
   (* Client management *)
   clients : (Lwt_unix.file_descr, client) Hashtbl.t;
@@ -65,6 +74,11 @@ type session = {
   output_cond : unit Lwt_condition.t;
   mutable last_sent_pos : int;  (* Track what was already broadcast *)
 
+  (* Dedicated editor channel; never mixed with PTY bytes. *)
+  mutable editor_provider : editor_provider option;
+  editor_provider_lock : Lwt_mutex.t;
+  editor_request_lock : Lwt_mutex.t;
+
   (* Control *)
   mutable running : bool;
   mutable shutdown_complete : bool;
@@ -75,6 +89,19 @@ type t = session
 let get_id s = s.session_id
 let get_clients s = Hashtbl.fold (fun _ c acc -> c :: acc) s.clients []
 let get_agent_pid s = Some s.agent_pid
+
+let authorize_editor_provider ~creator_uid user_info = user_info.Auth.uid = creator_uid
+let authorize_editor_request ~agent_uid ~agent_session_id user_info ~peer_session_id =
+  user_info.Auth.uid = agent_uid && peer_session_id = agent_session_id
+let editor_request_authorized t user_info ~peer_session_id =
+  authorize_editor_request ~agent_uid:t.agent_uid ~agent_session_id:t.agent_pid user_info ~peer_session_id
+
+let close_noerr fd =
+  Lwt.catch (fun () -> Lwt_unix.close fd) (fun _ -> Lwt.return_unit)
+
+let stop_provider provider =
+  if Lwt.is_sleeping provider.stopped then Lwt.wakeup_later provider.stop ();
+  close_noerr provider.socket
 
 let signal_process_group pid signal =
   try Unix.kill (-pid) signal with _ -> ()
@@ -211,7 +238,7 @@ let rec broadcast_loop (t : session) =
         in
         let dead = ref [] in
 
-        let send_to_client fd client =
+        let send_to_client fd (client : client) =
           Lwt.pick [
             (* Try to write with timeout *)
             (let rec write_all offset remaining =
@@ -261,7 +288,7 @@ let rec broadcast_loop (t : session) =
       ) else
         broadcast_loop t
 
-let create ~session_id ~creator ~agent_user ~program ~args ~rows ~cols ~audit =
+let create ~session_id ~creator ~agent_user ~editor_socket_path ~program ~args ~rows ~cols ~audit =
   let* () = Logs_lwt.info (fun m -> m "Creating session %s" session_id) in
 
   (* Open PTY *)
@@ -276,6 +303,9 @@ let create ~session_id ~creator ~agent_user ~program ~args ~rows ~cols ~audit =
         with Not_found -> 
           "/tmp"
     in
+    let agent_uid =
+      try (Unix.getpwnam agent_user).Unix.pw_uid with Not_found -> -1
+    in
     (* Ensure home directory exists *)
     let () = 
       try 
@@ -289,6 +319,10 @@ let create ~session_id ~creator ~agent_user ~program ~args ~rows ~cols ~audit =
       "COLORTERM", "truecolor";
       "TERM_PROGRAM", "aaau";
       "SESSION_ID", session_id;
+      "AAAU_SESSION_ID", session_id;
+      "AAAU_EDITOR_SOCKET", editor_socket_path;
+      "EDITOR", "aaau-editor";
+      "VISUAL", "aaau-editor";
       "SHELL", "/bin/bash";
     ] in
 
@@ -311,12 +345,17 @@ let create ~session_id ~creator ~agent_user ~program ~args ~rows ~cols ~audit =
         audit;
         pty;
         agent_pid = pid;
+        creator;
+        agent_uid;
         clients = Hashtbl.create 10;
         clients_lock = Lwt_mutex.create ();
         input_queue = Lwt_queue.create ();
         output_buffer = Buffer.create 102400;
         output_cond = Lwt_condition.create ();
         last_sent_pos = 0;
+        editor_provider = None;
+        editor_provider_lock = Lwt_mutex.create ();
+        editor_request_lock = Lwt_mutex.create ();
         running = true;
         shutdown_complete = false;
       } in
@@ -328,7 +367,7 @@ let create ~session_id ~creator ~agent_user ~program ~args ~rows ~cols ~audit =
       let* () = Audit.log audit {
         timestamp = Unix.time ();
         source = "system";
-        user = creator;
+        user = creator.Auth.username;
         session_id;
         command_type = "session_start";
         content = Printf.sprintf "Agent PID %d" pid;
@@ -382,7 +421,7 @@ let add_client t ~socket ~addr ~user_info =
       Lwt.return_ok client
   )
 
-let remove_client t client =
+let remove_client t (client : client) =
   Lwt_mutex.with_lock t.clients_lock (fun () ->
     if Hashtbl.mem t.clients client.socket then
       Hashtbl.remove t.clients client.socket;
@@ -406,6 +445,15 @@ let shutdown t =
     in
     Lwt_condition.broadcast t.output_cond ();
 
+    let* () =
+      Lwt_mutex.with_lock t.editor_provider_lock (fun () ->
+        match t.editor_provider with
+        | None -> Lwt.return_unit
+        | Some provider ->
+          t.editor_provider <- None;
+          stop_provider provider)
+    in
+
     (* Terminate the agent process group so descendants cannot outlive the session. *)
     signal_process_group t.agent_pid Sys.sigterm;
     let* () = Lwt_unix.sleep 1.0 in
@@ -427,6 +475,97 @@ let shutdown t =
 
     (* Flush audit logs *)
     Audit.flush t.audit
+
+let register_editor_provider t ~socket ~user_info =
+  if not (authorize_editor_provider ~creator_uid:t.creator.Auth.uid user_info) then
+    Lwt.return_error "Only the session creator may provide editor forwarding"
+  else if not t.running then
+    Lwt.return_error "Session is not running"
+  else
+    Lwt_mutex.with_lock t.editor_provider_lock (fun () ->
+      let stopped, stop = Lwt.wait () in
+      let provider = {
+        socket;
+        token = Uuidm.v4_gen (Random.State.make_self_init ()) () |> Uuidm.to_string;
+        stopped;
+        stop;
+      } in
+      let previous = t.editor_provider in
+      t.editor_provider <- Some provider;
+      let* () = match previous with None -> Lwt.return_unit | Some old -> stop_provider old in
+      Lwt.return_ok stopped)
+
+let clear_provider_if_current t provider =
+  Lwt_mutex.with_lock t.editor_provider_lock (fun () ->
+    match t.editor_provider with
+    | Some current when current.token = provider.token ->
+      t.editor_provider <- None;
+      stop_provider provider
+    | _ -> Lwt.return_unit)
+
+let editor_failure request_id message =
+  { Editor_protocol.request_id; status = 69; error = Some message; content = None }
+
+let forward_editor_request t ~user_info ~peer_session_id content =
+  let unauthorized = not (editor_request_authorized t user_info ~peer_session_id) in
+  if unauthorized then
+    Lwt.return (editor_failure "unauthorized" "Only the configured agent account may request editing")
+  else if not t.running then
+    Lwt.return (editor_failure "unavailable" "Session is not running")
+  else
+    Lwt_mutex.with_lock t.editor_request_lock (fun () ->
+      let request_id = Uuidm.v4_gen (Random.State.make_self_init ()) () |> Uuidm.to_string in
+      let audit_completion response = Audit.log t.audit {
+        timestamp = Unix.time (); source = "system"; user = t.creator.Auth.username;
+        session_id = t.session_id; command_type = "editor_complete"; content = request_id;
+        metadata = ["outcome", string_of_int response.Editor_protocol.status];
+      } in
+      let* () = Audit.log t.audit {
+        timestamp = Unix.time (); source = "agent"; user = user_info.Auth.username;
+        session_id = t.session_id; command_type = "editor_start"; content = request_id;
+        metadata = ["operator", t.creator.Auth.username; "bytes", string_of_int (String.length content)];
+      } in
+      let* provider = Lwt_mutex.with_lock t.editor_provider_lock (fun () -> Lwt.return t.editor_provider) in
+      match provider with
+      | None ->
+        let response = editor_failure request_id "Editor forwarding unavailable" in
+        let* () = audit_completion response in
+        Lwt.return response
+      | Some provider ->
+        let request = { Editor_protocol.request_id; content } in
+        let exchange =
+          let* sent = Editor_protocol.write_frame provider.socket (Editor_protocol.request_to_string request) in
+          match sent with
+          | Error message -> Lwt.return_error message
+          | Ok () ->
+            let* payload = Editor_protocol.read_frame provider.socket in
+            begin match payload with
+            | Error _ as error -> Lwt.return error
+            | Ok payload ->
+              begin match Editor_protocol.response_of_string payload with
+              | Error _ as error -> Lwt.return error
+              | Ok response when response.Editor_protocol.request_id <> request_id ->
+                Lwt.return_error "Mismatched editor response ID"
+              | Ok response -> Lwt.return_ok response
+              end
+            end
+        in
+        let timeout =
+          let* () = Lwt_unix.sleep Editor_protocol.request_timeout_seconds in
+          Lwt.return_error "Editor request timed out"
+        in
+        let* result = Lwt.pick [exchange; timeout] in
+        let response = match result with
+          | Ok response -> response
+          | Error message -> editor_failure request_id message
+        in
+        let* () =
+          match result with
+          | Ok _ -> Lwt.return_unit
+          | Error _ -> clear_provider_if_current t provider
+        in
+        let* () = audit_completion response in
+        Lwt.return response)
 
 let handle_client_input t ~client ~data =
   client.last_activity <- Unix.time ();

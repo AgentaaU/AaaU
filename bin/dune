@@ -8,6 +8,15 @@
  (libraries AaaU cmdliner))
 
 (executable
+ (name editor)
+ (public_name aaau-editor)
+ (package AaaU)
+ (flags
+  (:standard -warn-error -A))
+ (modules editor)
+ (libraries AaaU))
+
+(executable
  (name client)
  (public_name aaau-client)
  (package AaaU)

@@ -19,7 +19,8 @@ fi
 # Install binaries
 echo "Installing binaries to ${PREFIX}/bin..."
 install -m 755 "${SCRIPT_DIR}/aaau-server" "${PREFIX}/bin/"
-install -m 755 "${SCRIPT_DIR}/aaau-client" "${PREFIX}/bin/"
+install -m 755 "${SCRIPT_DIR}/aaau" "${PREFIX}/bin/"
+install -m 755 "${SCRIPT_DIR}/aaau-editor" "${PREFIX}/bin/"
 
 # Install systemd service
 echo "Installing systemd service..."
