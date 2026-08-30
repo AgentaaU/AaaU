@@ -44,13 +44,6 @@ jobs:
           cp _build/default/bin/server.exe release/aaau-server
           cp _build/default/bin/client.exe release/aaau
           cp _build/default/bin/editor.exe release/aaau-editor
-          # Include systemd service and install script for Linux
-          if [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
-            cp contrib/aaau-server.service release/
-            cp contrib/install.sh release/
-            chmod +x release/install.sh
-            archive_files+=(aaau-server.service install.sh)
-          fi
           (
             cd release
             tar -czvf ${{ matrix.artifact_name }}.tar.gz "${archive_files[@]}"

@@ -2,28 +2,29 @@
 # Install or uninstall AaaU and its systemd service.
 #
 # Usage:
-#   sudo ./install.sh install
-#   sudo ./install.sh uninstall
+#   sudo ./contrib/install.sh install
+#   sudo ./contrib/install.sh uninstall
 #
 # Environment overrides:
-#   PREFIX=/opt/aaau SYSTEMD_DIR=/etc/systemd/system sudo ./install.sh install
+#   PREFIX=/opt/aaau SYSTEMD_DIR=/etc/systemd/system sudo ./contrib/install.sh install
 
 set -euo pipefail
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 readonly PREFIX="${PREFIX:-/usr/local}"
 readonly SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
 readonly SERVICE_NAME="aaau-server.service"
 readonly SERVICE_PATH="${SYSTEMD_DIR}/${SERVICE_NAME}"
 readonly BIN_DIR="${PREFIX}/bin"
-readonly SERVER_BINARY="${SCRIPT_DIR}/aaau-server"
-readonly CLIENT_BINARY="${SCRIPT_DIR}/aaau"
-readonly EDITOR_BINARY="${SCRIPT_DIR}/aaau-editor"
+readonly SERVER_BINARY="${PROJECT_DIR}/_build/default/bin/server.exe"
+readonly CLIENT_BINARY="${PROJECT_DIR}/_build/default/bin/client.exe"
+readonly EDITOR_BINARY="${PROJECT_DIR}/_build/default/bin/editor.exe"
 readonly SERVICE_FILE="${SCRIPT_DIR}/${SERVICE_NAME}"
 
 usage() {
   cat <<'EOF'
-Usage: sudo ./install.sh {install|uninstall}
+Usage: sudo ./contrib/install.sh {install|uninstall}
 
 Commands:
   install    Install already-built AaaU binaries and the systemd service.
@@ -57,7 +58,7 @@ install_project() {
   local file
   for file in "${SERVER_BINARY}" "${CLIENT_BINARY}" "${EDITOR_BINARY}" "${SERVICE_FILE}"; do
     if [[ ! -f "${file}" ]]; then
-      echo "Error: missing release file ${file}." >&2
+      echo "Error: missing required file ${file}. Run 'dune build' first." >&2
       exit 1
     fi
   done

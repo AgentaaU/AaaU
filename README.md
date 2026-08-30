@@ -123,11 +123,11 @@ dune build
 ```bash
 # Installs the already-built aaau-server, aaau-client, and aaau-editor,
 # installs the systemd unit, and initializes the default AaaU user and directories.
-sudo ./install.sh install
+sudo ./contrib/install.sh install
 
 # Later, remove installed binaries and the service. This preserves accounts
 # and audit logs so that session data is not removed unexpectedly.
-sudo ./install.sh uninstall
+sudo ./contrib/install.sh uninstall
 ```
 
 ## Setup
