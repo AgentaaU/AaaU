@@ -66,7 +66,9 @@ let setup_socket t =
 
   (* Set permissions *)
   let gid = human_group.Unix.gr_gid in
-  Unix.chown t.socket_path 0 gid;
+  (* The service can run as the agent account.  Keeping the current owner
+     makes that mode work; only the control group needs to be assigned. *)
+  Unix.chown t.socket_path (-1) gid;
   Unix.chmod t.socket_path human_socket_mode;
 
   t.server_socket <- Some socket;
@@ -81,7 +83,7 @@ let setup_editor_socket t =
   let* () = Lwt_unix.bind socket (Unix.ADDR_UNIX t.editor_socket_path) in
   Lwt_unix.listen socket 5;
   let account = Unix.getpwnam t.agent_user in
-  Unix.chown t.editor_socket_path 0 account.Unix.pw_gid;
+  Unix.chown t.editor_socket_path (-1) account.Unix.pw_gid;
   Unix.chmod t.editor_socket_path editor_socket_mode;
   t.editor_server_socket <- Some socket;
   Logs_lwt.info (fun m -> m "Agent editor requests listening on %s" t.editor_socket_path)

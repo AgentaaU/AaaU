@@ -26,9 +26,10 @@ install -m 755 "${SCRIPT_DIR}/aaau-editor" "${PREFIX}/bin/"
 echo "Installing systemd service..."
 install -m 644 "${SCRIPT_DIR}/aaau-server.service" "${SYSTEMD_DIR}/"
 
-# Initialize aaau environment
+# Initialize aaau environment.  This one-time provisioning step creates the
+# dedicated unprivileged service account; the server itself does not use sudo.
 echo "Initializing aaau environment..."
-aaau-server init
+aaau-server init --user agent --group aaau-users --log-dir /var/lib/aaau
 
 # Reload systemd
 systemctl daemon-reload

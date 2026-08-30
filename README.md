@@ -29,8 +29,9 @@ sudo aaau-server init
 ### 3. Start the Server
 
 ```bash
-# Run the server (requires sudo for PTY and user switching)
-sudo aaau-server run
+# Run the server. The service runs as the dedicated `agent` account; sudo is
+# only needed once for installation and `init`.
+systemctl start aaau-server
 ```
 
 ### 4. Connect and Run Agent
@@ -199,10 +200,10 @@ The `init` command will:
 
 ```bash
 # Run in foreground
-sudo aaau-server run -s /var/run/aaau/server.sock -g aaau-users
+aaau-server run -s /var/run/aaau/server.sock -g aaau-users -u agent
 
 # Or as daemon
-sudo aaau-server run -d -s /var/run/aaau/server.sock -g aaau-users
+aaau-server run -d -s /var/run/aaau/server.sock -g aaau-users -u agent
 ```
 
 Options:

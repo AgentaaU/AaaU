@@ -1,0 +1,21 @@
+image: ocaml/opam:debian-12-ocaml-5.2
+
+stages:
+  - test
+
+cache:
+  key: "$CI_COMMIT_REF_SLUG"
+  paths:
+    - _opam/
+
+before_script:
+  - opam update
+  - eval "$(opam env)"
+  - opam install . --deps-only --with-test --yes
+
+test:
+  stage: test
+  script:
+    - eval "$(opam env)"
+    - dune build @all
+    - dune test

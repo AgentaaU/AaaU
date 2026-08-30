@@ -205,16 +205,18 @@ let fork_agent ~slave ~user ~program ~args ~env ~rows ~cols =
         let user_entry = Unix.getpwnam user in
         let group_entry = Unix.getgrnam user in
 
-        (* Initialize group list and switch *)
+        (* A normal deployment runs the bridge as the agent account, so no
+           privilege transition is required.  Root may still host several
+           agent accounts and performs the transition explicitly. *)
         let gid = group_entry.Unix.gr_gid in
         let uid = user_entry.Unix.pw_uid in
-
-        (* Clear supplementary groups *)
-        let _ = Unix.setgroups [||] in
-        
-        (* Switch to agent user *)
-        Unix.setgid gid;
-        Unix.setuid uid;
+        if Unix.geteuid () = 0 then begin
+          Unix.setgroups [||];
+          Unix.setgid gid;
+          Unix.setuid uid
+        end else if Unix.geteuid () <> uid then
+          raise (Failure (Printf.sprintf
+            "Cannot start agent '%s' without root; run the bridge as that user" user));
 
         (* Set environment *)
         List.iter (fun (k, v) -> Unix.putenv k v) env;

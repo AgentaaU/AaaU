@@ -6,14 +6,21 @@ Wants=network.target
 
 [Service]
 Type=notify
-ExecStart=/usr/local/bin/aaau-server run --lock-file /var/run/aaau/aaau.lock
+ExecStart=/usr/local/bin/aaau-server run --lock-file /run/aaau/aaau.lock --log-dir /var/lib/aaau
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5s
 
-# Run as root (required for PTY management and user switching)
-User=root
-Group=root
+# The bridge and agent both run as this dedicated account.  The supplementary
+# group lets the bridge create the human-control socket; agent UID is still
+# explicitly denied on that socket by the bridge.
+User=agent
+Group=agent
+SupplementaryGroups=aaau-users
+RuntimeDirectory=aaau
+RuntimeDirectoryMode=0755
+StateDirectory=aaau
+StateDirectoryMode=0750
 
 # Logging
 StandardOutput=journal
@@ -30,11 +37,10 @@ ProtectKernelModules=true
 ProtectControlGroups=true
 
 # Allow PTY and socket operations
-CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SETUID CAP_SETGID CAP_AUDIT_WRITE
-AmbientCapabilities=CAP_SYS_ADMIN CAP_SETUID CAP_SETGID CAP_AUDIT_WRITE
+CapabilityBoundingSet=
 
 # Socket and lock file directory access
-ReadWritePaths=/var/run/aaau /var/log/aaau /var/lib/agents
+ReadWritePaths=/run/aaau /var/lib/aaau /var/lib/agents
 
 [Install]
 WantedBy=multi-user.target

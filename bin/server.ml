@@ -99,11 +99,15 @@ let remove_lock_file path =
   end
 
 let run_server socket_path editor_socket_path shared_group agent_user log_dir daemonize default_program lock_file_path =
-  (* Check for root privileges *)
-  if Unix.getuid () <> 0 then begin
-    Printf.eprintf "Error: Need root permission to run server.\n%!";
-    Printf.eprintf "Please run with sudo.\n%!";
-    exit 1
+  (* Running the bridge does not need root when it is started as the agent
+     account.  Provisioning remains a separate privileged operation (init). *)
+  if Unix.geteuid () <> 0 then begin
+    let configured_uid = (Unix.getpwnam agent_user).Unix.pw_uid in
+    if Unix.geteuid () <> configured_uid then begin
+      Printf.eprintf "Error: run as the configured agent user '%s' (or root).\n%!"
+        agent_user;
+      exit 1
+    end
   end;
 
   (* Create lock file to prevent multiple instances *)
