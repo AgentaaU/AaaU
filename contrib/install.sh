@@ -16,6 +16,10 @@ readonly SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
 readonly SERVICE_NAME="aaau-server.service"
 readonly SERVICE_PATH="${SYSTEMD_DIR}/${SERVICE_NAME}"
 readonly BIN_DIR="${PREFIX}/bin"
+readonly SERVER_BINARY="${SCRIPT_DIR}/aaau-server"
+readonly CLIENT_BINARY="${SCRIPT_DIR}/aaau"
+readonly EDITOR_BINARY="${SCRIPT_DIR}/aaau-editor"
+readonly SERVICE_FILE="${SCRIPT_DIR}/${SERVICE_NAME}"
 
 usage() {
   cat <<'EOF'
@@ -50,21 +54,21 @@ require_systemd() {
 install_project() {
   require_systemd
 
-  local binary
-  for binary in server client editor; do
-    if [[ ! -f "${SCRIPT_DIR}/_build/default/bin/${binary}.exe" ]]; then
-      echo "Error: missing ${binary}.exe. Run 'dune build' before installation." >&2
+  local file
+  for file in "${SERVER_BINARY}" "${CLIENT_BINARY}" "${EDITOR_BINARY}" "${SERVICE_FILE}"; do
+    if [[ ! -f "${file}" ]]; then
+      echo "Error: missing release file ${file}." >&2
       exit 1
     fi
   done
 
   echo "Installing binaries to ${BIN_DIR}..."
-  install -Dm755 "${SCRIPT_DIR}/_build/default/bin/server.exe" "${BIN_DIR}/aaau-server"
-  install -Dm755 "${SCRIPT_DIR}/_build/default/bin/client.exe" "${BIN_DIR}/aaau-client"
-  install -Dm755 "${SCRIPT_DIR}/_build/default/bin/editor.exe" "${BIN_DIR}/aaau-editor"
+  install -Dm755 "${SERVER_BINARY}" "${BIN_DIR}/aaau-server"
+  install -Dm755 "${CLIENT_BINARY}" "${BIN_DIR}/aaau-client"
+  install -Dm755 "${EDITOR_BINARY}" "${BIN_DIR}/aaau-editor"
 
   echo "Installing systemd service..."
-  install -Dm644 "${SCRIPT_DIR}/contrib/${SERVICE_NAME}" "${SERVICE_PATH}"
+  install -Dm644 "${SERVICE_FILE}" "${SERVICE_PATH}"
   systemctl daemon-reload
 
   # This one-time provisioning step creates the dedicated unprivileged
