@@ -61,6 +61,7 @@ type session = {
   (* PTY *)
   pty : Pty.t;
   agent_pid : int;
+  agent_user : string;
   creator : Auth.user_info;
   agent_uid : int;
 
@@ -177,6 +178,19 @@ let rec pty_read_loop (t : session) =
         Lwt.return_unit
     ) else (
       let data = Bytes.sub_string buf 0 n in
+
+      (* Audit output before it is forwarded.  This is intentionally separate
+         from the history buffer: output compaction must not trim the audit
+         trail. *)
+      let* () = Audit.log t.audit {
+        timestamp = Unix.time ();
+        source = "agent";
+        user = t.agent_user;
+        session_id = t.session_id;
+        command_type = "output";
+        content = data;
+        metadata = [];
+      } in
 
       (* Save to buffer *)
       Buffer.add_string t.output_buffer data;
@@ -345,6 +359,7 @@ let create ~session_id ~creator ~agent_user ~editor_socket_path ~program ~args ~
         audit;
         pty;
         agent_pid = pid;
+        agent_user;
         creator;
         agent_uid;
         clients = Hashtbl.create 10;

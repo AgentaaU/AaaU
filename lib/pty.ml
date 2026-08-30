@@ -88,10 +88,13 @@ let set_raw_mode fd =
 
 (* Set terminal size using ioctl *)
 let set_terminal_size fd ~rows ~cols =
-  try
-    let fd_int = fd_to_int fd in
-    set_winsize fd_int rows cols
-  with _ -> ()
+  (* struct winsize uses unsigned short fields.  Reject invalid values before
+     crossing the C boundary rather than allowing negative integers to wrap. *)
+  if rows > 0 && rows <= 1000 && cols > 0 && cols <= 1000 then
+    try
+      let fd_int = fd_to_int fd in
+      set_winsize fd_int rows cols
+    with _ -> ()
 
 (* Get terminal size *)
 let get_terminal_size fd =
@@ -105,13 +108,6 @@ let set_controlling_terminal fd =
   try
     let fd_int = fd_to_int fd in
     set_ctty fd_int
-  with _ -> ()  (* Default fallback *)
-
-(* Set foreground process group *)
-let set_foreground_process_group fd pid =
-  try
-    let fd_int = fd_to_int fd in
-    set_pgrp fd_int pid
   with _ -> ()  (* Default fallback *)
 
 let login_shell_argv ~program ~args =
@@ -165,11 +161,6 @@ let fork_agent ~slave ~user ~program ~args ~env ~rows ~cols =
         raise (Failure (Printf.sprintf "Program not executable: %s" program))
     end;
     
-    let slave_fd = Unix.openfile slave [Unix.O_RDWR] 0 in
-
-    (* Set terminal size before fork *)
-    set_terminal_size slave_fd ~rows ~cols;
-
     let pid = Unix.fork () in
 
     if pid = 0 then begin
@@ -178,14 +169,17 @@ let fork_agent ~slave ~user ~program ~args ~env ~rows ~cols =
         (* Create new session - this detaches from current controlling terminal *)
         let _ = Unix.setsid () in
 
-        (* Open slave as controlling terminal *)
-        let slave_ctl = Unix.openfile slave [Unix.O_RDWR] 0 in
+        (* Open the slave only after becoming a session leader, then explicitly
+           acquire it as this session's controlling terminal. *)
+        let slave_ctl = Unix.openfile slave [Unix.O_RDWR; Unix.O_NOCTTY] 0 in
+
+        set_terminal_size slave_ctl ~rows ~cols;
         
         (* Set the slave as the controlling terminal for this session *)
-        set_controlling_terminal slave_ctl;
+        set_ctty (fd_to_int slave_ctl);
 
         (* Set foreground process group so signals are delivered correctly *)
-        set_foreground_process_group slave_ctl (Unix.getpid ());
+        set_pgrp (fd_to_int slave_ctl) (Unix.getpid ());
 
         (* Configure PTY slave for interactive use *)
         configure_slave slave_ctl;
@@ -198,9 +192,6 @@ let fork_agent ~slave ~user ~program ~args ~env ~rows ~cols =
         (* Close the original slave_ctl since it's now stdin/stdout/stderr *)
         Unix.close slave_ctl;
         
-        (* Close the PTY master fd in child *)
-        Unix.close slave_fd;
-
         (* Get user information *)
         let user_entry = Unix.getpwnam user in
         let group_entry = Unix.getgrnam user in
@@ -235,7 +226,6 @@ let fork_agent ~slave ~user ~program ~args ~env ~rows ~cols =
         Unix._exit 1
     end else begin
       (* Parent process *)
-      Unix.close slave_fd;
       Ok pid
     end
 

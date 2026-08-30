@@ -5,7 +5,9 @@ After=network.target
 Wants=network.target
 
 [Service]
-Type=notify
+# aaau-server does not use sd_notify(3), so systemd should track its main PID
+# directly instead of waiting for a readiness notification.
+Type=simple
 ExecStart=/usr/local/bin/aaau-server run --lock-file /run/aaau/aaau.lock --log-dir /var/lib/aaau
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
