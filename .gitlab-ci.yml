@@ -9,6 +9,10 @@ cache:
     - _opam/
 
 before_script:
+  # GitLab checks out the project as root while this image executes as opam.
+  # opam reads package metadata through `git ls-files`, which Git otherwise
+  # rejects as an unsafe repository ownership transition.
+  - git config --global --add safe.directory "$CI_PROJECT_DIR"
   - opam update
   - eval "$(opam env)"
   - opam install . --deps-only --with-test --yes
