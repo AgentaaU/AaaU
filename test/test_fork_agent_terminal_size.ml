@@ -4,10 +4,7 @@
 open AaaU
 
 let test_fork_agent_terminal_size () =
-  let user =
-    try Unix.getlogin ()
-    with _ -> Unix.getenv "USER"
-  in
+  let user = (Unix.getpwuid (Unix.geteuid ())).Unix.pw_name in
   match Pty.open_pty () with
     | Error msg ->
         Printf.printf "FAIL: Could not open PTY: %s\n%!" msg;

@@ -15,10 +15,7 @@ let has_pty_support () =
   with _ -> false
 
 let test_terminal_echo () =
-  let user =
-    try Unix.getlogin ()
-    with _ -> Unix.getenv "USER"
-  in
+  let user = (Unix.getpwuid (Unix.geteuid ())).Unix.pw_name in
   if not (has_pty_support ()) then begin
     Printf.printf "SKIP: No PTY support in this environment\n%!";
     true

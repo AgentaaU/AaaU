@@ -14,10 +14,7 @@ let test_agent_exit () =
       Printf.eprintf "PTY open failed: %s\n%!" e;
       false
     | Ok (pty, slave) ->
-      let user =
-        try Unix.getlogin ()
-        with _ -> Unix.getenv "USER"
-      in
+      let user = (Unix.getpwuid (Unix.geteuid ())).Unix.pw_name in
 
       (* Fork a simple agent that exits immediately *)
       match AaaU.Pty.fork_agent ~slave ~user

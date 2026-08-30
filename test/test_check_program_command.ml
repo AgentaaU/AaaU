@@ -5,10 +5,7 @@ open AaaU
 let test_check_program_command () =
   (* Test that fork_agent properly handles non-existent commands in PATH *)
   (* Non-absolute paths are resolved by login shell, so child process handles error *)
-  let user =
-    try Unix.getlogin ()
-    with _ -> Unix.getenv "USER"
-  in
+  let user = (Unix.getpwuid (Unix.geteuid ())).Unix.pw_name in
   let result =
       match Pty.open_pty () with
       | Error _ -> true  (* Can't test without PTY *)

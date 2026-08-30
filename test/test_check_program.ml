@@ -4,10 +4,7 @@ open AaaU
 
 let test_check_program () =
   (* Internal test via fork_agent behavior *)
-  let user =
-    try Unix.getlogin ()
-    with _ -> Unix.getenv "USER"
-  in
+  let user = (Unix.getpwuid (Unix.geteuid ())).Unix.pw_name in
   let result =
       match Pty.open_pty () with
       | Error _ -> true  (* Can't test without PTY *)
