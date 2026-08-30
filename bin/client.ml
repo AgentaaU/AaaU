@@ -3,6 +3,10 @@
 open Lwt.Syntax
 open Cmdliner
 
+(* Sys.sigwinch was only added after OCaml 5.2.  AaaU is Linux-only, where
+   SIGWINCH is consistently signal 28. *)
+let sigwinch = 28
+
 let write_all = AaaU.Client_io.write_all
 
 let socket_path =
@@ -269,7 +273,7 @@ and run_interactive socket ~initial_output ~provider_socket =
       Lwt.return_unit
     )
   in
-  Sys.set_signal Sys.sigwinch (Signal_handle handle_winch);
+  Sys.set_signal sigwinch (Signal_handle handle_winch);
 
   (* Exit condition for coordinating thread shutdown *)
   let exit_cond = Lwt_condition.create () in
@@ -399,7 +403,7 @@ and run_interactive socket ~initial_output ~provider_socket =
     (* Restore terminal attributes *)
     Unix.tcsetattr Unix.stdin Unix.TCSAFLUSH old_tty;
     (* Restore default SIGWINCH handler *)
-    Sys.set_signal Sys.sigwinch Signal_default;
+    Sys.set_signal sigwinch Signal_default;
     Option.iter (fun fd -> Lwt.async (fun () -> Lwt.catch (fun () -> Lwt_unix.close fd) (fun _ -> Lwt.return_unit))) provider_socket
   in
 
