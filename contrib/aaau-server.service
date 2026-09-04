@@ -13,16 +13,20 @@ ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5s
 
-# The bridge and agent both run as this dedicated account.  The supplementary
-# group lets the bridge create the human-control socket; agent UID is still
-# explicitly denied on that socket by the bridge.
+# The bridge and agent both run as this dedicated account. The runtime
+# directory inherits the human-control group, so agent processes do not need
+# that group as a supplementary privilege.
 User=agent
 Group=agent
-SupplementaryGroups=aaau-users
 RuntimeDirectory=aaau
-RuntimeDirectoryMode=0755
+RuntimeDirectoryMode=0710
 StateDirectory=aaau
-StateDirectoryMode=0750
+StateDirectoryMode=0700
+
+# Let sockets inherit aaau-users without adding the agent to that group.
+# The '+' prefix restricts these privileged setup steps to these two commands.
+ExecStartPre=+/usr/bin/chgrp aaau-users /run/aaau
+ExecStartPre=+/usr/bin/chmod 2710 /run/aaau
 
 # Logging
 StandardOutput=journal
@@ -30,19 +34,34 @@ StandardError=journal
 SyslogIdentifier=aaau-server
 
 # Security hardening
-NoNewPrivileges=false
+NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
 PrivateTmp=true
+PrivateDevices=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
+ProtectKernelLogs=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+RemoveIPC=true
+# Keep local/Internet sockets and interface discovery, while excluding packet
+# sockets and unrelated protocol families.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+SystemCallArchitectures=native
+UMask=0077
 
 # Allow PTY and socket operations
 CapabilityBoundingSet=
 
-# Socket and lock file directory access
-ReadWritePaths=/run/aaau /var/lib/aaau /var/lib/agents
+# RuntimeDirectory= and StateDirectory= are writable automatically. Only the
+# configured agent home needs an additional writable filesystem exception.
+ReadWritePaths=/home/agent
 
 [Install]
 WantedBy=multi-user.target

@@ -34,6 +34,9 @@ let test_audit_respects_configured_log_dir () =
       if Array.length files <> 1 then
         fail "expected exactly one audit log file, found %d" (Array.length files);
       let log_path = Filename.concat tmp_dir files.(0) in
+      let mode = (Unix.stat log_path).Unix.st_perm in
+      if mode <> 0o600 then
+        fail "expected audit log mode 600, got %03o" mode;
       let content = In_channel.with_open_bin log_path In_channel.input_all in
       if not (String.contains content 'h') then
         fail "expected audit content to be written, got %S" content)

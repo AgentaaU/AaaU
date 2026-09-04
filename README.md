@@ -144,6 +144,7 @@ sudo aaau-server init
 # The init command creates:
 # - User: agent
 # - Group: agent
+# - Private home: /home/agent (mode 0700)
 # - Directories: /var/run/aaau, /var/log/aaau
 ```
 
@@ -156,6 +157,7 @@ If you prefer to set up manually:
 ```bash
 # Create dedicated user for running agents
 sudo useradd -r -U -s /bin/false -d /home/agent agent
+sudo chmod 0700 /home/agent
 ```
 
 #### 2. Create Shared Group
@@ -173,8 +175,10 @@ sudo usermod -aG agent-shared $USER
 ```bash
 sudo mkdir -p /var/run/aaau
 sudo mkdir -p /var/log/aaau
-sudo chown root:agent-shared /var/run/aaau
-sudo chmod 755 /var/run/aaau
+sudo chown agent:agent-shared /var/run/aaau
+sudo chmod 2710 /var/run/aaau
+sudo chown agent:agent /var/log/aaau
+sudo chmod 0700 /var/log/aaau
 ```
 
 ## Usage

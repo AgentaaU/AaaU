@@ -8,6 +8,10 @@ let human_peer_allowed ~agent_uid user = user.Auth.uid <> agent_uid
 let groups_are_isolated ~agent_gid ~human_gid ~agent_username ~human_members =
   agent_gid <> human_gid && not (Array.exists (( = ) agent_username) human_members)
 
+let set_group_if_needed path gid =
+  if (Unix.stat path).Unix.st_gid <> gid then
+    Unix.chown path (-1) gid
+
 type t = {
   socket_path : string;
   editor_socket_path : string;
@@ -68,7 +72,10 @@ let setup_socket t =
   let gid = human_group.Unix.gr_gid in
   (* The service can run as the agent account.  Keeping the current owner
      makes that mode work; only the control group needs to be assigned. *)
-  Unix.chown t.socket_path (-1) gid;
+  (* The systemd runtime directory is setgid, so the socket normally already
+     has the human-control group. Avoid requiring that group as a
+     supplementary privilege merely to repeat the inherited ownership. *)
+  set_group_if_needed t.socket_path gid;
   Unix.chmod t.socket_path human_socket_mode;
 
   t.server_socket <- Some socket;
@@ -83,7 +90,7 @@ let setup_editor_socket t =
   let* () = Lwt_unix.bind socket (Unix.ADDR_UNIX t.editor_socket_path) in
   Lwt_unix.listen socket 5;
   let account = Unix.getpwnam t.agent_user in
-  Unix.chown t.editor_socket_path (-1) account.Unix.pw_gid;
+  set_group_if_needed t.editor_socket_path account.Unix.pw_gid;
   Unix.chmod t.editor_socket_path editor_socket_mode;
   t.editor_server_socket <- Some socket;
   Logs_lwt.info (fun m -> m "Agent editor requests listening on %s" t.editor_socket_path)

@@ -1,11 +1,12 @@
 (** Test lock file mechanism to prevent multiple instances *)
 
 let lock_file_path = "/tmp/aaau_test.lock"
+let lock_file_mode = 0o600
 
 (* Simulate the lock file creation logic from server.ml *)
 let create_lock_file path =
   try
-    let fd = Unix.openfile path [Unix.O_CREAT; Unix.O_EXCL; Unix.O_WRONLY] 0o644 in
+    let fd = Unix.openfile path [Unix.O_CREAT; Unix.O_EXCL; Unix.O_WRONLY] lock_file_mode in
     (* Write PID to lock file *)
     let pid = string_of_int (Unix.getpid ()) in
     Unix.write_substring fd pid 0 (String.length pid) |> ignore;
@@ -29,7 +30,7 @@ let create_lock_file path =
         (* Stale lock file, remove it *)
         Unix.unlink path;
         (* Retry creating lock *)
-        let fd = Unix.openfile path [Unix.O_CREAT; Unix.O_EXCL; Unix.O_WRONLY] 0o644 in
+        let fd = Unix.openfile path [Unix.O_CREAT; Unix.O_EXCL; Unix.O_WRONLY] lock_file_mode in
         let pid = string_of_int (Unix.getpid ()) in
         Unix.write_substring fd pid 0 (String.length pid) |> ignore;
         Unix.close fd;
@@ -38,7 +39,7 @@ let create_lock_file path =
         (* Process not running, stale lock *)
         Unix.unlink path;
         (* Retry creating lock *)
-        let fd = Unix.openfile path [Unix.O_CREAT; Unix.O_EXCL; Unix.O_WRONLY] 0o644 in
+        let fd = Unix.openfile path [Unix.O_CREAT; Unix.O_EXCL; Unix.O_WRONLY] lock_file_mode in
         let pid = string_of_int (Unix.getpid ()) in
         Unix.write_substring fd pid 0 (String.length pid) |> ignore;
         Unix.close fd;
@@ -62,6 +63,13 @@ let test_lock_file_prevents_multiple_instances () =
     remove_lock_file lock_file_path;
     false
   | Ok () ->
+    let actual_mode = (Unix.stat lock_file_path).Unix.st_perm in
+    if actual_mode <> lock_file_mode then begin
+      Printf.printf "FAIL: Lock file mode is %03o, expected %03o\n%!"
+        actual_mode lock_file_mode;
+      remove_lock_file lock_file_path;
+      false
+    end else
     (* Second instance should fail *)
     let second_result = create_lock_file lock_file_path in
     match second_result with
@@ -85,7 +93,7 @@ let test_lock_file_stale_lock () =
   remove_lock_file lock_file_path;
 
   (* Create a lock file with a non-existent PID *)
-  let fd = Unix.openfile lock_file_path [Unix.O_CREAT; Unix.O_EXCL; Unix.O_WRONLY] 0o644 in
+  let fd = Unix.openfile lock_file_path [Unix.O_CREAT; Unix.O_EXCL; Unix.O_WRONLY] lock_file_mode in
   Unix.write_substring fd "999999" 0 6 |> ignore;  (* Fake PID that doesn't exist *)
   Unix.close fd;
 

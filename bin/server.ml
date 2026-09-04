@@ -39,10 +39,11 @@ let lock_file =
 
 (* Lock file management *)
 let lock_fd = ref None
+let lock_file_mode = 0o600
 
 let create_lock_file path =
   try
-    let fd = Unix.openfile path [Unix.O_CREAT; Unix.O_EXCL; Unix.O_WRONLY] 0o644 in
+    let fd = Unix.openfile path [Unix.O_CREAT; Unix.O_EXCL; Unix.O_WRONLY] lock_file_mode in
     (* Write PID to lock file *)
     let pid = string_of_int (Unix.getpid ()) in
     Unix.write_substring fd pid 0 (String.length pid) |> ignore;
@@ -66,7 +67,7 @@ let create_lock_file path =
         (* Stale lock file, remove it *)
         Unix.unlink path;
         (* Retry creating lock *)
-        let fd = Unix.openfile path [Unix.O_CREAT; Unix.O_EXCL; Unix.O_WRONLY] 0o644 in
+        let fd = Unix.openfile path [Unix.O_CREAT; Unix.O_EXCL; Unix.O_WRONLY] lock_file_mode in
         let pid = string_of_int (Unix.getpid ()) in
         Unix.write_substring fd pid 0 (String.length pid) |> ignore;
         lock_fd := Some fd;
@@ -75,7 +76,7 @@ let create_lock_file path =
         (* Process not running, stale lock *)
         Unix.unlink path;
         (* Retry creating lock *)
-        let fd = Unix.openfile path [Unix.O_CREAT; Unix.O_EXCL; Unix.O_WRONLY] 0o644 in
+        let fd = Unix.openfile path [Unix.O_CREAT; Unix.O_EXCL; Unix.O_WRONLY] lock_file_mode in
         let pid = string_of_int (Unix.getpid ()) in
         Unix.write_substring fd pid 0 (String.length pid) |> ignore;
         lock_fd := Some fd;
@@ -168,7 +169,7 @@ let run_cmd =
 
 (* Init subcommand *)
 let home_dir =
-  let doc = "Home directory for agent user" in
+  let doc = "Home directory for the agent user" in
   Arg.(value & opt string "/home/agent" & info ["h"; "home"] ~docv:"DIR" ~doc)
 
 let shell =
@@ -245,23 +246,29 @@ let run_init agent_user shared_group socket_path log_dir home_dir shell =
     ignore (run_command "gpasswd" ["-d"; agent_user; shared_group])
   end else begin
     Printf.printf "    Creating user '%s'...\n%!" agent_user;
-    (* Create parent directory for home if it doesn't exist *)
-    if not (Sys.file_exists home_dir) then begin
-      Printf.printf "    Creating parent directory '%s'...\n%!" home_dir;
-      ignore (run_command "mkdir" ["-p"; home_dir])
+    let home_parent = Filename.dirname home_dir in
+    if not (Sys.file_exists home_parent) then begin
+      Printf.printf "    Creating parent directory '%s'...\n%!" home_parent;
+      ignore (run_command "mkdir" ["-p"; home_parent])
     end;
     (* Create home directory *)
-    let home = Filename.concat home_dir agent_user in
     if run_command "useradd"
-         ["--system"; "--user-group"; "--home-dir"; home;
+         ["--system"; "--user-group"; "--home-dir"; home_dir;
           "--shell"; shell; "--create-home"; agent_user] then begin
       Printf.printf "    User created successfully.\n%!";
       (* Set ownership of home directory *)
-      ignore (run_command "chown" [agent_user ^ ":" ^ agent_user; home])
+      ignore (run_command "chown" [agent_user ^ ":" ^ agent_user; home_dir])
     end else begin
       Printf.eprintf "    ERROR: Failed to create user '%s'.\n%!" agent_user;
       exit_code := 1
     end
+  end;
+
+  (* Enforce a private home for both existing and newly created accounts. *)
+  if user_exists agent_user then begin
+    let account = Unix.getpwnam agent_user in
+    Unix.chown account.Unix.pw_dir account.Unix.pw_uid account.Unix.pw_gid;
+    Unix.chmod account.Unix.pw_dir 0o700
   end;
   
   (* Step 3: Create socket directory *)
@@ -270,19 +277,21 @@ let run_init agent_user shared_group socket_path log_dir home_dir shell =
   if Sys.file_exists socket_dir then
     Printf.printf "    Directory '%s' already exists.\n%!" socket_dir
   else begin
-    if run_command "mkdir" ["-p"; socket_dir] then begin
-      Printf.printf "    Directory created.\n%!";
-      (* Socket nodes enforce access; directory traversal is public. *)
-      if group_exists shared_group then begin
-        let gid = (Unix.getgrnam shared_group).Unix.gr_gid in
-        Unix.chown socket_dir 0 gid;
-        Unix.chmod socket_dir 0o755;
-        Printf.printf "    Permissions set (root:%s 755).\n%!" shared_group
-      end
-    end else begin
+    if run_command "mkdir" ["-p"; socket_dir] then
+      Printf.printf "    Directory created.\n%!"
+    else begin
       Printf.eprintf "    ERROR: Failed to create directory '%s'.\n%!" socket_dir;
       exit_code := 1
     end
+  end;
+  if Sys.file_exists socket_dir && group_exists shared_group
+     && user_exists agent_user then begin
+    let uid = (Unix.getpwnam agent_user).Unix.pw_uid in
+    let gid = (Unix.getgrnam shared_group).Unix.gr_gid in
+    Unix.chown socket_dir uid gid;
+    Unix.chmod socket_dir 0o2710;
+    Printf.printf "    Permissions set (%s:%s 2710).\n%!"
+      agent_user shared_group
   end;
   
   (* Step 4: Create log directory *)
@@ -290,14 +299,19 @@ let run_init agent_user shared_group socket_path log_dir home_dir shell =
   if Sys.file_exists log_dir then
     Printf.printf "    Directory '%s' already exists.\n%!" log_dir
   else begin
-    if run_command "mkdir" ["-p"; log_dir] then begin
-      Printf.printf "    Directory created.\n%!";
-      Unix.chmod log_dir 0o750;
-      Printf.printf "    Permissions set (root-only writes, 0750).\n%!"
-    end else begin
+    if run_command "mkdir" ["-p"; log_dir] then
+      Printf.printf "    Directory created.\n%!"
+    else begin
       Printf.eprintf "    ERROR: Failed to create directory '%s'.\n%!" log_dir;
       exit_code := 1
     end
+  end;
+  if Sys.file_exists log_dir && user_exists agent_user then begin
+    let account = Unix.getpwnam agent_user in
+    Unix.chown log_dir account.Unix.pw_uid account.Unix.pw_gid;
+    Unix.chmod log_dir 0o700;
+    Printf.printf "    Permissions set (%s:%s 0700).\n%!"
+      agent_user agent_user
   end;
   
   (* Step 5: State the isolation invariant. *)

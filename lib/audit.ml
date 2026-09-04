@@ -52,7 +52,7 @@ let flush_to_disk t =
       in
       let content = String.concat "\n" lines ^ "\n" in
       let flags = [Unix.O_WRONLY; Unix.O_CREAT; Unix.O_APPEND] in
-      let* fd = Lwt_unix.openfile log_file flags 0o640 in
+      let* fd = Lwt_unix.openfile log_file flags 0o600 in
       let oc = Lwt_io.of_fd ~mode:Lwt_io.output fd in
       let* () = Lwt.finalize
         (fun () -> Lwt_io.write oc content)
