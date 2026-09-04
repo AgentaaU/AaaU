@@ -159,8 +159,24 @@ let run_server socket_path editor_socket_path shared_group agent_user log_dir da
   Sys.set_signal Sys.sigterm (Signal_handle handle_signal);
   Sys.set_signal Sys.sigint (Signal_handle handle_signal);
 
-  (* Start *)
-  Lwt_main.run (AaaU.Bridge.start server)
+  (* Start.  Do not let a provisioning or socket setup error escape through
+     Cmdliner: an uncaught exception is reported as exit status 125, which
+     obscures the actual cause in systemd's status output.  The lock is ours
+     at this point, so also remove it before returning a normal service
+     failure. *)
+  match
+    try
+      Lwt_main.run (AaaU.Bridge.start server);
+      Ok ()
+    with exn ->
+      Error (Printexc.to_string exn)
+  with
+  | Ok () ->
+      remove_lock_file lock_file_path
+  | Error message ->
+      remove_lock_file lock_file_path;
+      Printf.eprintf "Error: server startup failed: %s\n%!" message;
+      exit 1
 
 let run_cmd =
   let doc = "Run the server" in

@@ -13,17 +13,22 @@ ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5s
 
-# The bridge and agent both run as this dedicated account. The runtime
-# directory inherits the human-control group, so agent processes do not need
-# that group as a supplementary privilege.
+# The bridge and agent both run as this dedicated account.  The bridge must
+# be able to assign the human-control group to the socket it creates; the
+# setgid runtime directory alone is not sufficient on every system for Unix
+# socket nodes.  The bridge explicitly rejects connections from the agent UID
+# on that socket, so this group is not an authorization bypass.
 User=agent
 Group=agent
+SupplementaryGroups=aaau-users
 RuntimeDirectory=aaau
 RuntimeDirectoryMode=0710
 StateDirectory=aaau
 StateDirectoryMode=0700
 
-# Let sockets inherit aaau-users without adding the agent to that group.
+# Reapply the human-control group and setgid bit after systemd creates the
+# runtime directory.  This makes the directory traversable by authorized
+# clients and makes newly-created sockets inherit aaau-users.
 # The '+' prefix restricts these privileged setup steps to these two commands.
 ExecStartPre=+/usr/bin/chgrp aaau-users /run/aaau
 ExecStartPre=+/usr/bin/chmod 2710 /run/aaau

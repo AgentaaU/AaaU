@@ -445,8 +445,10 @@ let run_client_lwt socket_path session_id readonly program program_alias no_edit
       | Unix.Unix_error (Unix.ENOENT, "connect", _) ->
         Printf.eprintf
           "Cannot connect to AaaU server: socket %s does not exist.\n\
-           Start it with `sudo aaau-server run -s %s`, or pass the correct socket with -s.\n%!"
-          path path
+           Start the managed service with `sudo systemctl start aaau-server`.\n\
+           If it does not stay running, inspect `sudo journalctl -u aaau-server -n 50 --no-pager`.\n\
+           Alternatively, pass the correct socket with -s.\n%!"
+          path
       | Unix.Unix_error (Unix.ECONNREFUSED, "connect", _) ->
         Printf.eprintf
           "Cannot connect to AaaU server at %s: connection refused.\n\
@@ -455,8 +457,11 @@ let run_client_lwt socket_path session_id readonly program program_alias no_edit
       | Unix.Unix_error ((Unix.EACCES | Unix.EPERM), "connect", _) ->
         Printf.eprintf
           "Cannot connect to AaaU server at %s: permission denied.\n\
-           Verify that your account belongs to the configured AaaU shared group.\n%!"
-          path
+           Verify that your account belongs to the configured AaaU shared group,\n\
+           and that the socket directory is searchable by that group:\n\
+             sudo chgrp <shared-group> %s && sudo chmod 2710 %s\n\
+           Then restart the managed service: sudo systemctl restart aaau-server.\n%!"
+          path (Filename.dirname path) (Filename.dirname path)
       | _ ->
         Printf.eprintf "aaau-client failed: %s\n%!" (Printexc.to_string exn)
       end;
