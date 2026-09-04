@@ -45,6 +45,9 @@ aaau codex
 
 # Shortcut alias for claude with the standard skip-permissions flag
 aaau claude
+
+# Shortcut alias for opencode in automatic mode
+aaau-client opencode
 ```
 
 ## Overview
