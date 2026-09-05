@@ -38,6 +38,7 @@ let program_alias =
     ("codex", "codex");
     ("claude", "claude");
     ("opencode", "opencode");
+    ("pi", "pi");
   ] in
   let doc = "Shortcut alias for a predefined agent command" in
   Arg.(value & pos 0 (some (enum aliases)) None & info [] ~docv:"ALIAS" ~doc)

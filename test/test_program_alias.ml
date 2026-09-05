@@ -39,9 +39,11 @@ let () =
   expect_alias "codex" "codex --dangerously-bypass-approvals-and-sandbox";
   expect_alias "claude" "claude --dangerously-skip-permissions";
   expect_alias "opencode" "opencode --auto";
+  expect_alias "pi" "pi -a";
   expect_expanded_split "codex" "codex" ["--dangerously-bypass-approvals-and-sandbox"];
   expect_expanded_split "claude" "claude" ["--dangerously-skip-permissions"];
   expect_expanded_split "opencode" "opencode" ["--auto"];
+  expect_expanded_split "pi" "pi" ["-a"];
   expect_no_alias "unknown";
   expect_no_alias "Codex";
   expect_no_alias "CLAUDE";

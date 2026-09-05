@@ -74,4 +74,5 @@ let expand_program_alias = function
   | "codex" -> Some "codex --dangerously-bypass-approvals-and-sandbox"
   | "claude" -> Some "claude --dangerously-skip-permissions"
   | "opencode" -> Some "opencode --auto"
+  | "pi" -> Some "pi -a"
   | _ -> None
