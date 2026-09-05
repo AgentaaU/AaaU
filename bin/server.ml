@@ -99,6 +99,11 @@ let remove_lock_file path =
     try Unix.unlink path with _ -> ()
   end
 
+let startup_error_message = function
+  | Unix.Unix_error (error, operation, path) ->
+      Printf.sprintf "%s(%s): %s" operation path (Unix.error_message error)
+  | exn -> Printexc.to_string exn
+
 let run_server socket_path editor_socket_path shared_group agent_user log_dir daemonize default_program lock_file_path =
   (* Running the bridge does not need root when it is started as the agent
      account.  Provisioning remains a separate privileged operation (init). *)
@@ -169,7 +174,7 @@ let run_server socket_path editor_socket_path shared_group agent_user log_dir da
       Lwt_main.run (AaaU.Bridge.start server);
       Ok ()
     with exn ->
-      Error (Printexc.to_string exn)
+      Error (startup_error_message exn)
   with
   | Ok () ->
       remove_lock_file lock_file_path

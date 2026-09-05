@@ -62,6 +62,11 @@ let setup_socket t =
   let dir = Filename.dirname t.socket_path in
   (try Unix.mkdir dir 0o755 with Unix.Unix_error _ -> ());
 
+  (* The service account may create entries here but must not be able to
+     change the directory's human-control group.  systemd's privileged
+     ExecStartPre setup owns that job; its setgid bit gives this socket the
+     correct group when it is created below. *)
+
   (* Create socket *)
   let socket = Lwt_unix.socket Unix.PF_UNIX Unix.SOCK_STREAM 0 in
   let* () = Lwt_unix.bind socket (Unix.ADDR_UNIX t.socket_path) in
