@@ -54,7 +54,7 @@ A secure PTY (pseudo-terminal) bridge for running AI agents under isolated syste
 │   └── dune               # Library build configuration
 ├── bin/                    # Executables
 │   ├── server.ml          # aaau-server entry point (init, run subcommands)
-│   ├── client.ml          # aaau-client entry point
+│   ├── client.ml          # aaau entry point
 │   └── dune               # Executable build configuration
 ├── test/                   # Test suite
 │   ├── test_AaaU.ml       # Comprehensive PTY and protocol tests
@@ -95,7 +95,7 @@ dune install
 
 # Build and install manually
 sudo cp _build/install/default/bin/aaau-server /usr/local/bin/
-sudo cp _build/install/default/bin/aaau-client /usr/local/bin/
+sudo cp _build/install/default/bin/aaau /usr/local/bin/
 ```
 
 ### Build Configuration
@@ -298,20 +298,20 @@ sudo aaau-server run \
   -d                      # Daemonize
 ```
 
-### aaau-client (`bin/client.ml`)
+### aaau (`bin/client.ml`)
 
 ```bash
 # Create new session
-aaau-client -s /var/run/aaau/server.sock
+aaau -s /var/run/aaau/server.sock
 
 # Create new session with specific program
-aaau-client -s /var/run/aaau/server.sock -p kimi-cli
+aaau -s /var/run/aaau/server.sock -p kimi-cli
 
 # Join existing session
-aaau-client -s /var/run/aaau/server.sock -n <session-id>
+aaau -s /var/run/aaau/server.sock -n <session-id>
 
 # Read-only mode
-aaau-client -s /var/run/aaau/server.sock -n <session-id> -r
+aaau -s /var/run/aaau/server.sock -n <session-id> -r
 ```
 
 **Client options:**

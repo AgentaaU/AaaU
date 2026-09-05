@@ -65,7 +65,7 @@ install_project() {
 
   echo "Installing binaries to ${BIN_DIR}..."
   install -Dm755 "${SERVER_BINARY}" "${BIN_DIR}/aaau-server"
-  install -Dm755 "${CLIENT_BINARY}" "${BIN_DIR}/aaau-client"
+  install -Dm755 "${CLIENT_BINARY}" "${BIN_DIR}/aaau"
   install -Dm755 "${EDITOR_BINARY}" "${BIN_DIR}/aaau-editor"
 
   echo "Installing systemd service..."
@@ -97,7 +97,7 @@ uninstall_project() {
   rm -f -- "${SERVICE_PATH}"
   rm -f -- \
     "${BIN_DIR}/aaau-server" \
-    "${BIN_DIR}/aaau-client" \
+    "${BIN_DIR}/aaau" \
     "${BIN_DIR}/aaau-editor"
   systemctl daemon-reload
 

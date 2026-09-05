@@ -18,7 +18,7 @@
 
 (executable
  (name client)
- (public_name aaau-client)
+ (public_name aaau)
  (package AaaU)
  (flags
   (:standard -warn-error -A))

@@ -464,13 +464,13 @@ let run_client_lwt socket_path session_id readonly program program_alias no_edit
            Then restart the managed service: sudo systemctl restart aaau-server.\n%!"
           path (Filename.dirname path) (Filename.dirname path)
       | _ ->
-        Printf.eprintf "aaau-client failed: %s\n%!" (Printexc.to_string exn)
+        Printf.eprintf "aaau failed: %s\n%!" (Printexc.to_string exn)
       end;
       Lwt.return_unit)
 
 let cmd =
   let doc = "Agent-as-User Bridge Client" in
-  let info = Cmd.info "aaau-client" ~version:"0.1.0" ~doc in
+  let info = Cmd.info "aaau" ~version:"0.1.0" ~doc in
   Cmd.v info Term.(const (fun a b c d e f g -> Lwt_main.run (run_client_lwt a b c d e f g))
     $ socket_path $ session_id $ readonly $ program $ program_alias $ no_editor_forwarding $ editor_command)
 

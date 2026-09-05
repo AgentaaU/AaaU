@@ -47,7 +47,7 @@ aaau codex
 aaau claude
 
 # Shortcut alias for opencode in automatic mode
-aaau-client opencode
+aaau opencode
 ```
 
 ## Overview
@@ -124,7 +124,7 @@ dune build
 ### Install
 
 ```bash
-# Installs the already-built aaau-server, aaau-client, and aaau-editor,
+# Installs the already-built aaau-server, aaau, and aaau-editor,
 # installs the systemd unit, and initializes the default AaaU user and directories.
 sudo ./contrib/install.sh install
 
