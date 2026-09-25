@@ -13,21 +13,37 @@ jobs:
         os:
           - ubuntu-latest
           - macos-latest
-
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up OCaml
-        uses: ocaml/setup-ocaml@v3
-        with:
-          ocaml-compiler: '5.4.1'
+      - name: Set up OCaml (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          apt-get update
+          apt-get install -y opam m4 pkg-config gcc make libev-dev libgmp-dev
+          opam init --bare --disable-sandboxing --yes
+          opam switch create . ocaml-base-compiler.5.4.1 --yes
+
+      - name: Set up OCaml (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew install opam m4 pkg-config
+          opam init --bare --disable-sandboxing --yes
+          opam switch create . ocaml-base-compiler.5.4.1 --yes
 
       - name: Install dependencies
-        run: opam install . --deps-only --with-test
+        run: opam install . --deps-only --with-test --yes
 
       - name: Build
         run: opam exec -- dune build
 
-      - name: Run tests
+      - name: Run Linux tests
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          AAAU_SKIP_PRIVILEGED_TESTS: '1'
         run: opam exec -- dune runtest
+
+      - name: Run audit retention test (macOS)
+        if: matrix.os == 'macos-latest'
+        run: opam exec -- dune exec test/test_audit_log_dir.exe

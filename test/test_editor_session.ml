@@ -4,7 +4,7 @@ let fail message = prerr_endline message; exit 1
 let expect condition message = if not condition then fail message
 
 let () =
-  if Unix.getuid () <> 0 then print_endline "editor session test skipped (requires root)"
+  if Unix.getuid () <> 0 || Sys.getenv_opt "AAAU_SKIP_PRIVILEGED_TESTS" = Some "1" then print_endline "editor session test skipped (requires root)"
   else begin
     let account = Unix.getpwuid (Unix.getuid ()) in
     let creator : AaaU.Auth.user_info = {

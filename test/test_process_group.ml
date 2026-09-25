@@ -1,5 +1,18 @@
 (** Test process group kill - verify children are terminated with parent *)
 
+let process_terminated pid =
+  try
+    Unix.kill pid 0;
+    (* A killed grandchild can remain as a zombie until PID 1 reaps it,
+       especially in a container. It is no longer running. *)
+    let stat = Printf.sprintf "/proc/%d/stat" pid in
+    let line = In_channel.with_open_text stat In_channel.input_line |> Option.get in
+    let state = line.[String.rindex line ')' + 2] in
+    state = 'Z' || state = 'X'
+  with
+  | Unix.Unix_error (Unix.ESRCH, _, _) -> true
+  | Sys_error _ | Not_found | Invalid_argument _ -> false
+
 let test_process_group () =
   let pipe_r, pipe_w = Unix.pipe () in
   let pid = Unix.fork () in
@@ -43,13 +56,7 @@ let test_process_group () =
       | _ ->
         false
     in
-    let grandchild_gone =
-      try
-        Unix.kill grandchild 0;
-        false
-      with Unix.Unix_error (Unix.ESRCH, _, _) ->
-        true
-    in
+    let grandchild_gone = process_terminated grandchild in
     if child_reaped && grandchild_gone then begin
       Printf.printf "PASS: Process group kill terminated child and grandchild\n%!";
       true

@@ -225,6 +225,11 @@ Options:
 - `-l, --log-dir`: Audit log directory (default: `/var/log/aaau`)
 - `-d, --daemon`: Run as daemon
 
+Audit files named `audit-YYYY-MM-DD.logl` in the configured log directory are
+kept for five local calendar days, including today. Older audit files are
+removed when the server starts and when the date changes. Other files are left
+alone.
+
 ### Connect with Client
 
 ```bash

@@ -2,7 +2,7 @@
 
 let test_agent_exit () =
   (* Skip test if not running as root - fork_agent requires root for setgroups *)
-  if Unix.getuid () <> 0 then begin
+  if Unix.getuid () <> 0 || Sys.getenv_opt "AAAU_SKIP_PRIVILEGED_TESTS" = Some "1" then begin
     Printf.printf "SKIP: requires root privileges\n%!";
     Printf.printf "PASS\n%!";
     exit 0
