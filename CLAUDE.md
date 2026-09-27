@@ -20,6 +20,10 @@ dune test
 # Run single test (e.g., test_pty_resize)
 dune test test_pty_resize
 
+# Run tests under coverage and enforce the 75% minimum
+opam install bisect_ppx_ng
+./contrib/check-coverage.sh
+
 # Install binaries
 dune install
 # Or manually:

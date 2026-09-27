@@ -19,4 +19,5 @@
   (yojson (>= 2.0))
   (uuidm (>= 0.9))
   (mtime (>= 1.4))
-  (cstruct (>= 6.0))))
+  (cstruct (>= 6.0))
+  (bisect_ppx_ng (and (>= 3.0.0) :with-test))))

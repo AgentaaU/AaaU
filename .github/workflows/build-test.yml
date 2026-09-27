@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [main, master]
 
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
 jobs:
   build-test:
     strategy:
@@ -21,9 +26,14 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           apt-get update
-          apt-get install -y opam m4 pkg-config gcc make libev-dev libgmp-dev
+          apt-get install -y opam m4 pkg-config gcc make libev-dev libgmp-dev jq
           opam init --bare --disable-sandboxing --yes
-          opam switch create . ocaml-base-compiler.5.4.1 --yes
+          # Create the local switch with --deps-only: without it opam also
+          # installs the project package itself, which makes the later
+          # `opam install . --deps-only --with-test` a no-op and so skips
+          # test-only dependencies such as bisect_ppx_ng (needed by the
+          # coverage gate).
+          opam switch create . ocaml-base-compiler.5.4.1 --deps-only --yes
 
       - name: Set up OCaml (macOS)
         if: matrix.os == 'macos-latest'
@@ -33,16 +43,36 @@ jobs:
           opam switch create . ocaml-base-compiler.5.4.1 --yes
 
       - name: Install dependencies
-        run: opam install . --deps-only --with-test --yes
+        run: |
+          opam update --yes
+          opam install . --deps-only --with-test --yes
+          # Safety net: in case the switch was created without --deps-only,
+          # request the coverage tool directly.
+          opam install bisect_ppx_ng --yes
 
       - name: Build
         run: opam exec -- dune build
 
-      - name: Run Linux tests
+      - name: Run Linux tests with coverage
         if: matrix.os == 'ubuntu-latest'
         env:
           AAAU_SKIP_PRIVILEGED_TESTS: '1'
-        run: opam exec -- dune runtest
+          COVERAGE_MIN: '90'
+          COVERAGE_REPORT_FILE: coverage-report.md
+        run: opam exec -- ./contrib/check-coverage.sh
+
+      - name: Post coverage report
+        if: always() && matrix.os == 'ubuntu-latest' && github.event_name == 'pull_request'
+        env:
+          COVERAGE_REPORT_FILE: coverage-report.md
+          FORGEJO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          API_URL: ${{ github.api_url }}
+          SERVER_URL: ${{ github.server_url }}
+          RUN_NUMBER: ${{ github.run_number }}
+          RUN_ID: ${{ github.run_id }}
+          REPO: ${{ github.repository }}
+        run: ./contrib/post-coverage-comment.sh
 
       - name: Run audit retention test (macOS)
         if: matrix.os == 'macos-latest'

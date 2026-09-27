@@ -1,4 +1,5 @@
-image: ocaml/opam:debian-12-ocaml-5.2
+# The coverage tool (bisect_ppx_ng) requires OCaml >= 5.3.
+image: ocaml/opam:debian-12-ocaml-5.4
 
 stages:
   - test
@@ -16,10 +17,15 @@ before_script:
   - opam update
   - eval "$(opam env)"
   - opam install . --deps-only --with-test --yes
+  - opam install bisect_ppx_ng --yes
 
 test:
   stage: test
+  variables:
+    # The unprivileged runner cannot execute the root-only bridge/session
+    # setup tests, so its gate is lower than the privileged Forgejo job.
+    COVERAGE_MIN: '85'
   script:
     - eval "$(opam env)"
     - dune build @all
-    - dune test
+    - ./contrib/check-coverage.sh

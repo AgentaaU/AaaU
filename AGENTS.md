@@ -370,7 +370,14 @@ dune test --verbose
 
 # Run specific test (via test binary)
 ./_build/default/test/test_AaaU.exe
+
+# Run the suite under Bisect_ppx and enforce 75% coverage
+# (bisect_ppx_ng is declared as a with-test dependency)
+./contrib/check-coverage.sh
 ```
+
+The coverage gate runs the unprivileged suite; privileged agent-spawning
+tests are skipped there and exercised by the normal test job.
 
 ## Security Considerations
 

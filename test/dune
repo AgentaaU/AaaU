@@ -180,3 +180,69 @@
  (name test_runtime_dir_env)
  (modules test_runtime_dir_env)
  (libraries AaaU))
+
+(test
+ (name test_session)
+ (modules test_session)
+ (libraries AaaU)
+ (enabled_if (= %{system} "linux")))
+
+(test
+ (name test_bridge)
+ (modules test_bridge)
+ (libraries AaaU)
+ (enabled_if (= %{system} "linux")))
+
+(test
+ (name test_protocol_ext)
+ (modules test_protocol_ext)
+ (libraries AaaU))
+
+(test
+ (name test_client_io_ext)
+ (modules test_client_io_ext)
+ (libraries AaaU))
+
+(test
+ (name test_command_line_ext)
+ (modules test_command_line_ext)
+ (libraries AaaU))
+
+(test
+ (name test_editor_protocol_ext)
+ (modules test_editor_protocol_ext)
+ (libraries AaaU))
+
+(test
+ (name test_editor_buffer_ext)
+ (modules test_editor_buffer_ext)
+ (libraries AaaU))
+
+(test
+ (name test_auth_ext)
+ (modules test_auth_ext)
+ (libraries AaaU)
+ (enabled_if (= %{system} "linux")))
+
+(test
+ (name test_pty_ext)
+ (modules test_pty_ext)
+ (libraries AaaU)
+ (enabled_if (= %{system} "linux")))
+
+(test
+ (name test_coverage_ext)
+ (modules test_coverage_ext)
+ (libraries AaaU))
+
+(test
+ (name test_session_coverage)
+ (modules test_session_coverage)
+ (libraries AaaU logs)
+ (enabled_if (= %{system} "linux")))
+
+(test
+ (name test_bridge_coverage)
+ (modules test_bridge_coverage)
+ (libraries AaaU logs)
+ (enabled_if (= %{system} "linux")))

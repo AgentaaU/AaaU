@@ -163,9 +163,11 @@ let fork_agent ~slave ~user ~program ~args ~env ~rows ~cols =
     
     let pid = Unix.fork () in
 
-    if pid = 0 then begin
-      (* Child process *)
-      try
+    (* The child branch runs before execvp/_exit, so bisect never gets to
+       flush its counters.  Exclude it from instrumentation: measuring it is
+       impossible rather than untested. *)
+    if pid = 0 then
+      (try
         (* Create new session - this detaches from current controlling terminal *)
         let _ = Unix.setsid () in
 
@@ -223,8 +225,8 @@ let fork_agent ~slave ~user ~program ~args ~env ~rows ~cols =
 
       with e ->
         Printf.eprintf "Agent startup failed: %s\n%!" (Printexc.to_string e);
-        Unix._exit 1
-    end else begin
+        Unix._exit 1) [@coverage off]
+    else begin
       (* Parent process *)
       Ok pid
     end

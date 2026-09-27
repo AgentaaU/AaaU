@@ -3,9 +3,10 @@ open Lwt.Syntax
 let fail message = prerr_endline message; exit 1
 let expect condition message = if not condition then fail message
 
+let () = Sys.set_signal Sys.sigpipe Sys.Signal_ignore
+
 let () =
-  if Unix.getuid () <> 0 || Sys.getenv_opt "AAAU_SKIP_PRIVILEGED_TESTS" = Some "1" then print_endline "editor session test skipped (requires root)"
-  else begin
+  begin
     let account = Unix.getpwuid (Unix.getuid ()) in
     let creator : AaaU.Auth.user_info = {
       username = account.Unix.pw_name; uid = account.pw_uid; gid = account.pw_gid;

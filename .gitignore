@@ -1,3 +1,5 @@
 _build
 !AGENTS.md
 AaaU.install
+coverage-report.md
+*.coverage

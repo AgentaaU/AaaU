@@ -348,6 +348,13 @@ let handle_client t client_fd addr =
     in
     Lwt.return_unit
 
+let register_session t session =
+  Lwt_mutex.with_lock t.sessions_lock (fun () ->
+    Hashtbl.replace t.sessions (Session.get_id session) session;
+    Lwt.return_unit)
+
+let set_running t value = t.running <- value
+
 let rec accept_loop t =
   if not t.running then
     Lwt.return_unit
@@ -418,29 +425,30 @@ let rec accept_editor_loop t =
       Lwt.async (fun () -> handle_editor_client t client_fd);
       accept_editor_loop t
 
+let cleanup_dead_sessions t =
+  Lwt_mutex.with_lock t.sessions_lock (fun () ->
+    let dead = ref [] in
+    Hashtbl.iter (fun id session ->
+      if not (Session.is_alive session) &&
+         List.length (Session.get_clients session) = 0 then
+        dead := (id, session) :: !dead
+    ) t.sessions;
+
+    List.iter (fun (id, session) ->
+      Hashtbl.remove t.sessions id;
+      Lwt.async (fun () -> Session.shutdown session)
+    ) !dead;
+
+    Lwt.return_unit
+  )
+
 let cleanup_sessions t =
   let rec loop () =
     let* () = Lwt_unix.sleep 60.0 in
     if not t.running then
       Lwt.return_unit
     else
-      let* () =
-        Lwt_mutex.with_lock t.sessions_lock (fun () ->
-          let dead = ref [] in
-          Hashtbl.iter (fun id session ->
-            if not (Session.is_alive session) &&
-               List.length (Session.get_clients session) = 0 then
-              dead := (id, session) :: !dead
-          ) t.sessions;
-
-          List.iter (fun (id, session) ->
-            Hashtbl.remove t.sessions id;
-            Lwt.async (fun () -> Session.shutdown session)
-          ) !dead;
-
-          Lwt.return_unit
-        )
-      in
+      let* () = cleanup_dead_sessions t in
       loop ()
   in
   loop ()

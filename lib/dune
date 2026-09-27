@@ -1,6 +1,8 @@
 (library
  (name AaaU)
  (public_name AaaU)
+ (instrumentation
+  (backend bisect_ppx_ng))
  (flags
   (:standard -warn-error -A))
  (foreign_stubs

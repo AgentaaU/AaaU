@@ -19,6 +19,8 @@ val get_terminal_size : Unix.file_descr -> (int * int)
 (** Get terminal window size (TIOCGWINSZ), returns (rows, cols) *)
 
 val set_controlling_terminal : Unix.file_descr -> unit
+(** Configure a PTY slave for interactive use (echo, signals, non-canonical). *)
+val configure_slave : Unix.file_descr -> unit
 (** Set the file descriptor as the controlling terminal (TIOCSCTTY) *)
 
 val login_shell_argv : program:string -> args:string list -> string array

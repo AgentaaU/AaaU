@@ -121,6 +121,25 @@ opam install -y dune lwt lwt_ppx logs fmt cmdliner yojson uuidm mtime cstruct
 dune build
 ```
 
+### Test and Coverage
+
+```bash
+# Run the test suite
+dune test
+
+# Install the coverage tool once (it is declared as a with-test dependency)
+opam install bisect_ppx_ng
+
+# Run the suite under Bisect_ppx and enforce a minimum coverage
+./contrib/check-coverage.sh
+
+# Or set a stricter threshold
+COVERAGE_MIN=80 ./contrib/check-coverage.sh
+```
+
+CI fails when aggregate line coverage falls below 75%. The privileged
+(agent-spawning) tests require root and are skipped by the coverage run.
+
 ### Install
 
 ```bash

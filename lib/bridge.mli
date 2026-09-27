@@ -26,3 +26,46 @@ val start : t -> unit Lwt.t
 
 val stop : t -> unit Lwt.t
 (** Stop server *)
+
+(** {2 Unit-test hooks}
+
+    The functions below expose the pieces of the handshake path that cannot be
+    reached without root privileges (the real server must be able to switch to
+    the agent account before it starts accepting connections). They are kept
+    public so the socket and parser behaviour can be exercised directly. *)
+
+val parse_new_json : string -> (string * string list * int * int, string) result
+(** Parse a [NEW_JSON:] payload into program, arguments, rows and columns. *)
+
+val authenticate_client :
+  t -> Lwt_unix.file_descr -> (Auth.user_info, string) result Lwt.t
+(** Resolve the peer of a connected human socket. *)
+
+val handle_handshake :
+  t ->
+  Lwt_unix.file_descr ->
+  Auth.user_info ->
+  ( [ `Dedicated of unit Lwt.t
+    | `Existing of Session.t * string
+    | `New of Session.t * string ],
+    string )
+  result
+  Lwt.t
+(** Read and act on a single handshake line from [client_fd]. *)
+
+val handle_client : t -> Lwt_unix.file_descr -> string -> unit Lwt.t
+(** Serve one authenticated human connection until it disconnects. *)
+
+val handle_editor_client : t -> Lwt_unix.file_descr -> unit Lwt.t
+(** Serve one connection on the isolated agent editor socket. *)
+
+val register_session : t -> Session.t -> unit Lwt.t
+(** Add an already-created session to the server's routing table. *)
+
+val set_running : t -> bool -> unit
+(** Toggle the accept/serve flag.  Only useful for unit tests that drive
+    the connection handlers without calling {!start}. *)
+
+val cleanup_dead_sessions : t -> unit Lwt.t
+(** Remove sessions whose agent has exited and that have no clients left.
+    One pass of the periodic cleanup loop, exposed for tests. *)
