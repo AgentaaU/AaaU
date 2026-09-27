@@ -428,6 +428,9 @@ let check_permission perm ~action =
 - Linux kernel with PTY support (`/dev/ptmx`, `/dev/pts`)
 - Root privileges for server (user switching requires root)
 - Pre-created agent user and shared group
+- systemd with `loginctl` to give the agent its own user-level services
+  (`aaau-server init` runs `loginctl enable-linger agent`; agent sessions then
+  export `XDG_RUNTIME_DIR` so `systemctl --user` and D-Bus work)
 
 ### File Permissions
 

@@ -175,3 +175,8 @@
  (modules test_editor_session)
  (libraries AaaU)
  (enabled_if (= %{system} "linux")))
+
+(test
+ (name test_runtime_dir_env)
+ (modules test_runtime_dir_env)
+ (libraries AaaU))

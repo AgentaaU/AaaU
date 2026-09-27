@@ -24,6 +24,16 @@ val create :
 (** Create new session, start agent with specified terminal size.
     Default program is /bin/bash. Use ~program:"kimi-cli" to run kimi-cli as agent. *)
 
+val runtime_dir_env :
+  ?exists:(string -> bool) -> agent_uid:int -> unit -> (string * string) list
+(** Environment that exposes an agent account's systemd/D-Bus runtime
+    directory to the session. When [agent_uid] is valid and
+    /run/user/<agent_uid> exists (a login session or lingering account),
+    returns ["XDG_RUNTIME_DIR", "/run/user/<uid>"]; otherwise returns [].
+
+The optional [exists] predicate defaults to {!Sys.file_exists} and exists so
+    the mapping can be tested without depending on the host's /run layout. *)
+
 val add_client :
   t ->
   socket:Lwt_unix.file_descr ->

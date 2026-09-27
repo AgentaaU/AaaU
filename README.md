@@ -146,6 +146,8 @@ sudo aaau-server init
 # - Group: agent
 # - Private home: /home/agent (mode 0700)
 # - Directories: /var/run/aaau, /var/log/aaau
+# - A lingering systemd --user manager (via `loginctl enable-linger agent`),
+#   so the agent can reach its own D-Bus and manage local units.
 ```
 
 ### Manual Setup (Alternative)
@@ -158,6 +160,9 @@ If you prefer to set up manually:
 # Create dedicated user for running agents
 sudo useradd -r -U -s /bin/false -d /home/agent agent
 sudo chmod 0700 /home/agent
+
+# Give the account its own systemd/D-Bus session for local user services
+sudo loginctl enable-linger agent
 ```
 
 #### 2. Create Shared Group
@@ -203,9 +208,44 @@ sudo aaau-server init \
 The `init` command will:
 1. Create the shared group (e.g., `agent`)
 2. Create the agent user (e.g., `agent`)
-3. Create socket directory with proper permissions
-4. Create log directory with proper permissions
-5. Verify that the agent has neither human-group membership nor sudo access
+3. Enable lingering so the agent account gets its own systemd/D-Bus session
+4. Create socket directory with proper permissions
+5. Create log directory with proper permissions
+6. Verify that the agent has neither human-group membership nor sudo access
+
+### User-Level systemd Services
+
+By default a system account has no login session, so there is no
+`systemd --user` manager and `/run/user/<uid>` does not exist. Any attempt to
+run `systemctl --user ...`, `busctl --user`, or another D-Bus client inside an
+agent session then fails with:
+
+```
+Failed to connect to user scope bus via local transport:
+$DBUS_SESSION_BUS_ADDRESS and $XDG_RUNTIME_DIR not defined
+```
+
+`aaau-server init` removes that barrier by enabling **lingering** for the agent
+account (`loginctl enable-linger agent`). logind then runs
+`user@<uid>.service` and creates `/run/user/<uid>` (including the D-Bus
+socket) at boot, independent of any login. AaaU also exports
+`XDG_RUNTIME_DIR=/run/user/<uid>` into every agent session when that directory
+exists, so the agent can start and manage its own local units:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now my-agent-task.service
+```
+
+If you provision manually instead, run the linger step yourself:
+
+```bash
+sudo loginctl enable-linger agent
+```
+
+Lingering is optional for the bridge itself; without it only the agent's
+user-level services (and its D-Bus session) are unavailable, while sessions
+still work normally.
 
 ### Start the Server
 

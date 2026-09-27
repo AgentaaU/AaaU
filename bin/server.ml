@@ -240,7 +240,7 @@ let run_init agent_user shared_group socket_path log_dir home_dir shell =
   let exit_code = ref 0 in
   
   (* Step 1: Create shared group *)
-  Printf.printf "[1/5] Checking shared group '%s'...\n%!" shared_group;
+  Printf.printf "[1/6] Checking shared group '%s'...\n%!" shared_group;
   if group_exists shared_group then begin
     Printf.printf "    Group '%s' already exists.\n%!" shared_group
   end else begin
@@ -254,7 +254,7 @@ let run_init agent_user shared_group socket_path log_dir home_dir shell =
   end;
   
   (* Step 2: Create agent user *)
-  Printf.printf "\n[2/5] Checking agent user '%s'...\n%!" agent_user;
+  Printf.printf "\n[2/6] Checking agent user '%s'...\n%!" agent_user;
   if user_exists agent_user then begin
     Printf.printf "    User '%s' already exists.\n%!" agent_user;
     let account = Unix.getpwnam agent_user in
@@ -292,8 +292,28 @@ let run_init agent_user shared_group socket_path log_dir home_dir shell =
     Unix.chmod account.Unix.pw_dir 0o700
   end;
   
-  (* Step 3: Create socket directory *)
-  Printf.printf "\n[3/5] Creating socket directory...\n%!";
+  (* Step 3: Enable the account's own systemd/D-Bus session.
+     Lingering starts a `systemd --user` manager at boot and populates
+     /run/user/<uid>, which is what lets processes running as the agent reach
+     their own D-Bus and manage local units with `systemctl --user`.  Without
+     it there is no user manager for the account, so those requests fail with
+     "$DBUS_SESSION_BUS_ADDRESS and $XDG_RUNTIME_DIR not defined". *)
+  Printf.printf "\n[3/6] Enabling user-level systemd services for '%s'...\n%!" agent_user;
+  if user_exists agent_user then begin
+    if run_command "loginctl" ["enable-linger"; agent_user] then
+      Printf.printf "    Linger enabled; systemd --user starts at boot.\n%!"
+    else begin
+      (* Linger is optional for the bridge itself: only agent-owned user
+         services (including their D-Bus session) need it, so report the
+         failure without aborting provisioning. *)
+      Printf.eprintf "    WARNING: could not enable linger for '%s'.\n%!" agent_user;
+      Printf.eprintf "    User-level systemd/D-Bus services will be unavailable.\n%!";
+      Printf.eprintf "    Retry later with: loginctl enable-linger %s\n%!" agent_user
+    end
+  end;
+
+  (* Step 4: Create socket directory *)
+  Printf.printf "\n[4/6] Creating socket directory...\n%!";
   let socket_dir = Filename.dirname socket_path in
   if Sys.file_exists socket_dir then
     Printf.printf "    Directory '%s' already exists.\n%!" socket_dir
@@ -315,8 +335,8 @@ let run_init agent_user shared_group socket_path log_dir home_dir shell =
       agent_user shared_group
   end;
   
-  (* Step 4: Create log directory *)
-  Printf.printf "\n[4/5] Creating log directory...\n%!";
+  (* Step 5: Create log directory *)
+  Printf.printf "\n[5/6] Creating log directory...\n%!";
   if Sys.file_exists log_dir then
     Printf.printf "    Directory '%s' already exists.\n%!" log_dir
   else begin
@@ -335,8 +355,8 @@ let run_init agent_user shared_group socket_path log_dir home_dir shell =
       agent_user agent_user
   end;
   
-  (* Step 5: State the isolation invariant. *)
-  Printf.printf "\n[5/5] Agent isolation configured.\n%!";
+  (* Step 6: State the isolation invariant. *)
+  Printf.printf "\n[6/6] Agent isolation configured.\n%!";
   Printf.printf "    '%s' is not granted human-group membership or sudo access.\n%!" agent_user;
   
   (* Summary *)

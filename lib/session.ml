@@ -302,6 +302,12 @@ let rec broadcast_loop (t : session) =
       ) else
         broadcast_loop t
 
+let runtime_dir_env ?(exists = Sys.file_exists) ~agent_uid () =
+  if agent_uid < 0 then []
+  else
+    let runtime_dir = Printf.sprintf "/run/user/%d" agent_uid in
+    if exists runtime_dir then [ "XDG_RUNTIME_DIR", runtime_dir ] else []
+
 let create ~session_id ~creator ~agent_user ~editor_socket_path ~program ~args ~rows ~cols ~audit =
   let* () = Logs_lwt.info (fun m -> m "Creating session %s" session_id) in
 
@@ -327,6 +333,13 @@ let create ~session_id ~creator ~agent_user ~editor_socket_path ~program ~args ~
           Unix.mkdir agent_home 0o755
       with _ -> ()
     in
+    (* When the account lingers (see `aaau-server init`), systemd runs a user
+       manager for it and owns /run/user/<uid>.  Export XDG_RUNTIME_DIR so
+       processes in the session can reach that manager's D-Bus and start local
+       units with `systemctl --user`.  The directory is absent when the account
+       has neither a login session nor lingering, and exporting a missing path
+       would only mislead D-Bus clients. *)
+    let runtime_env = runtime_dir_env ~agent_uid () in
     (* Start agent with minimal environment - login shell will set the rest *)
     let env = [
       "TERM", "xterm-256color";
@@ -338,7 +351,7 @@ let create ~session_id ~creator ~agent_user ~editor_socket_path ~program ~args ~
       "EDITOR", "aaau-editor";
       "VISUAL", "aaau-editor";
       "SHELL", "/bin/bash";
-    ] in
+    ] @ runtime_env in
 
     match Pty.fork_agent
       ~slave
