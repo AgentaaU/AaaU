@@ -72,8 +72,8 @@ install_project() {
   install -Dm644 "${SERVICE_FILE}" "${SERVICE_PATH}"
   systemctl daemon-reload
 
-  # This one-time provisioning step creates the dedicated unprivileged
-  # service account; the server itself does not use sudo.
+  # Provision the default unprivileged agent account. The managed bridge
+  # runs as root so it can drop to a different account for each session.
   echo "Initializing the default AaaU environment..."
   "${BIN_DIR}/aaau-server" init --user agent --group aaau-users --log-dir /var/lib/aaau
 

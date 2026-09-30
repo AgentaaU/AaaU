@@ -29,9 +29,9 @@ sudo aaau-server init
 ### 3. Start the Server
 
 ```bash
-# Run the server. The service runs as the dedicated `agent` account; sudo is
-# only needed once for installation and `init`.
-systemctl start aaau-server
+# Start the managed bridge. It runs as root to switch agent accounts; each
+# agent command runs as the selected unprivileged user.
+sudo systemctl start aaau-server
 ```
 
 ### 4. Connect and Run Agent
@@ -337,7 +337,16 @@ when joining an existing session with `--session`. The account must already
 exist, must not be root, and must not belong to the human control group (create
 additional accounts with `aaau-server create-user --name NAME`). A server that
 is not running as root can only select the account it already runs as; a
-root-run server may host any number of isolated agent accounts.
+root-run server may host any number of isolated agent accounts. The shipped
+systemd service runs the bridge as root with a restricted capability set, so
+`aaau -u researcher` works without running the client with sudo.
+
+After upgrading an installation with the old `User=agent` service, reinstall
+`contrib/aaau-server.service` (or run `sudo ./contrib/install.sh install`), then
+run `sudo systemctl daemon-reload` and `sudo systemctl restart aaau-server`.
+The service allows writes to agent homes under `/home`; for homes elsewhere,
+add their paths with `ReadWritePaths=` in `sudo systemctl edit aaau-server`,
+then restart the service.
 
 ### Editing Codex or Claude buffers in your Emacs
 

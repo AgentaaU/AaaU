@@ -264,3 +264,10 @@
  (deps test_client_user.sh)
  (enabled_if (= %{system} "linux"))
  (action (run bash %{dep:test_client_user.sh} %{exe:../bin/client.exe})))
+
+(rule
+ (alias runtest)
+ (deps test_service_user.sh ../contrib/aaau-server.service)
+ (enabled_if (= %{system} "linux"))
+ (action
+  (run bash %{dep:test_service_user.sh} %{dep:../contrib/aaau-server.service})))

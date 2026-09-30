@@ -13,18 +13,13 @@ ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5s
 
-# The bridge and agent both run as this dedicated account.  Some Linux
-# filesystems do not propagate a setgid directory's group to Unix sockets, so
-# the bridge needs this supplementary group only to set the socket group after
-# bind(2).  The bridge rejects the agent UID on the human socket using peer
-# credentials, so membership alone does not authorize agent connections.
-User=agent
-Group=agent
-SupplementaryGroups=aaau-users
+# The bridge must switch UID/GID for per-session --user selections. Only the
+# bridge runs as root; fork_agent clears supplementary groups and drops to the
+# selected account before executing any agent command.
+User=root
+Group=root
 RuntimeDirectory=aaau
-# The socket itself is group-restricted (0660, aaau-users).  Give other users
-# traversal only here so group clients can reach that socket even on systems
-# where RuntimeDirectory cannot be chgrp'd from an unprivileged service.
+# Clients and agent editor helpers need traversal; socket modes restrict access.
 RuntimeDirectoryMode=0711
 StateDirectory=aaau
 StateDirectoryMode=0700
@@ -57,12 +52,15 @@ LockPersonality=true
 SystemCallArchitectures=native
 UMask=0077
 
-# Allow PTY and socket operations
-CapabilityBoundingSet=
+# User switching, socket ownership, existing audit directories, PTY permissions,
+# and terminating agent process groups. No ambient capabilities reach agents.
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER CAP_KILL CAP_SETGID CAP_SETUID
 
 # RuntimeDirectory= and StateDirectory= are writable automatically. Only the
-# configured agent home needs an additional writable filesystem exception.
-ReadWritePaths=/home/agent
+# agent homes under /home need write access for every selectable account.
+# Unix permissions still isolate them after the child drops its UID/GID. Add
+# explicit paths in a systemd override for homes outside /home (e.g. /srv/agents).
+ReadWritePaths=/home
 
 [Install]
 WantedBy=multi-user.target
