@@ -332,7 +332,10 @@ aaau -s /var/run/aaau/server.sock -n <session-id> -r
 ```
 
 `--user NAME` (also `-u`) selects the isolated agent account that runs a new
-session. It defaults to `agent`, matching the server default, and is ignored
+session. When omitted, the server selects its configured account (normally
+`agent`). Plain `aaau` uses the legacy default-session handshake so it can also
+connect to older running servers. Explicit user selection requires an updated
+server. The option is ignored
 when joining an existing session with `--session`. The account must already
 exist, must not be root, and must not belong to the human control group (create
 additional accounts with `aaau-server create-user --name NAME`). A server that

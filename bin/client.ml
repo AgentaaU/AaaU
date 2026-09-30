@@ -14,8 +14,8 @@ let socket_path =
   Arg.(value & opt string "/var/run/aaau/server.sock" & info ["s"; "socket"] ~docv:"PATH" ~doc)
 
 let agent_user =
-  let doc = "System user for new sessions (ignored when joining an existing session)" in
-  Arg.(value & opt string "agent" & info ["u"; "user"] ~docv:"USER" ~doc)
+  let doc = "System user for new sessions (defaults to the server account; ignored when joining an existing session)" in
+  Arg.(value & opt (some string) None & info ["u"; "user"] ~docv:"USER" ~doc)
 
 let session_id =
   let doc = "Existing session ID to join" in
@@ -161,6 +161,11 @@ let rec run_client_lwt_inner socket_path session_id readonly program program_ali
   let handshake =
     match session_id with
     | Some id -> "SESSION:" ^ id
+    | None when program_spec = None && agent_user = None ->
+      (* Keep the default invocation compatible with servers predating the
+         optional program fields in NEW_JSON.  The legacy request uses the
+         server's configured program, arguments, and agent account. *)
+      Printf.sprintf "NEW:%d:%d" rows cols
     | None ->
       let program_fields =
         match program_spec with
@@ -170,8 +175,12 @@ let rec run_client_lwt_inner socket_path session_id readonly program program_ali
           ]
         | None -> []
       in
-      let payload = `Assoc (program_fields @ [
-        ("user", `String agent_user);
+      let user_fields =
+        match agent_user with
+        | None -> []
+        | Some user -> [("user", `String user)]
+      in
+      let payload = `Assoc (program_fields @ user_fields @ [
         ("rows", `Int rows);
         ("cols", `Int cols);
       ]) |> Yojson.Safe.to_string in
