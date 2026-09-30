@@ -56,11 +56,10 @@ UMask=0077
 # and terminating agent process groups. No ambient capabilities reach agents.
 CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER CAP_KILL CAP_SETGID CAP_SETUID
 
-# RuntimeDirectory= and StateDirectory= are writable automatically. Only the
-# agent homes under /home need write access for every selectable account.
-# Unix permissions still isolate them after the child drops its UID/GID. Add
-# explicit paths in a systemd override for homes outside /home (e.g. /srv/agents).
-ReadWritePaths=/home
+# RuntimeDirectory= and StateDirectory= are writable automatically. Restrict
+# other writes to the default agent home. Administrators must explicitly add
+# each additional agent home with ReadWritePaths= in a systemd override.
+ReadWritePaths=/home/agent
 
 [Install]
 WantedBy=multi-user.target

@@ -18,9 +18,7 @@ for cap in CAP_SETUID CAP_SETGID CAP_CHOWN CAP_FOWNER CAP_DAC_OVERRIDE CAP_KILL;
   esac
 done
 [ -z "$(value AmbientCapabilities)" ] || fail 'capabilities could survive agent exec'
-case " $(value ReadWritePaths) " in
-  *' /home '*) ;;
-  *) fail 'additional agent homes remain read-only' ;;
-esac
+[ "$(value ProtectHome)" = read-only ] || fail 'human homes lack read-only protection'
+[ "$(value ReadWritePaths)" = /home/agent ] || fail 'home write access must be limited to the default agent'
 [ -z "$(value SupplementaryGroups)" ] || fail 'bridge retains unnecessary supplementary groups'
 echo 'PASS: managed service supports isolated per-session users'

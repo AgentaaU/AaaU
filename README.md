@@ -344,9 +344,20 @@ systemd service runs the bridge as root with a restricted capability set, so
 After upgrading an installation with the old `User=agent` service, reinstall
 `contrib/aaau-server.service` (or run `sudo ./contrib/install.sh install`), then
 run `sudo systemctl daemon-reload` and `sudo systemctl restart aaau-server`.
-The service allows writes to agent homes under `/home`; for homes elsewhere,
-add their paths with `ReadWritePaths=` in `sudo systemctl edit aaau-server`,
-then restart the service.
+The service allows home-directory writes only to `/home/agent` by default.
+Before using an additional agent account, explicitly allow its home with
+`sudo systemctl edit aaau-server`, for example:
+
+```ini
+[Service]
+ReadWritePaths=/home/researcher
+```
+
+Then restart the service. The override adds to the default writable path;
+list individual agent homes rather than `/home`, so human homes remain
+read-only even to the privileged bridge. Use the same approach for agent
+homes outside `/home`. Account selection alone does not grant home write
+access.
 
 ### Editing Codex or Claude buffers in your Emacs
 
