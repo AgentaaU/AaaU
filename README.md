@@ -46,6 +46,9 @@ aaau codex
 # Shortcut alias for claude with the standard skip-permissions flag
 aaau claude
 
+# Shortcut alias for agy with the standard skip-permissions flag
+aaau agy
+
 # Shortcut alias for opencode in automatic mode
 aaau opencode
 ```

@@ -75,4 +75,5 @@ let expand_program_alias = function
   | "claude" -> Some "claude --dangerously-skip-permissions"
   | "opencode" -> Some "opencode --auto"
   | "pi" -> Some "pi -a"
+  | "agy" -> Some "agy --dangerously-skip-permissions"
   | _ -> None
