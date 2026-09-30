@@ -194,6 +194,12 @@
  (enabled_if (= %{system} "linux")))
 
 (test
+ (name test_bridge_user)
+ (modules test_bridge_user)
+ (libraries AaaU lwt.unix)
+ (enabled_if (= %{system} "linux")))
+
+(test
  (name test_protocol_ext)
  (modules test_protocol_ext)
  (libraries AaaU))
@@ -252,3 +258,9 @@
  (deps test_create_user.sh)
  (enabled_if (= %{system} "linux"))
  (action (run bash %{dep:test_create_user.sh} %{exe:../bin/server.exe})))
+
+(rule
+ (alias runtest)
+ (deps test_client_user.sh)
+ (enabled_if (= %{system} "linux"))
+ (action (run bash %{dep:test_client_user.sh} %{exe:../bin/client.exe})))

@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Per-session agent account**: `aaau --user NAME` selects which isolated agent account runs a new session. It defaults to `agent` for compatibility and is ignored when joining an existing session. The server validates that the account exists, is not root, and is isolated from the human control group; a non-root server may only keep running as its own account.
 - **Agent user systemd/D-Bus access**: `aaau-server init` now enables lingering for the agent account, and agent sessions export `XDG_RUNTIME_DIR`, so processes running as the agent can use `systemctl --user` and other D-Bus clients to manage local units. Manual setups should run `loginctl enable-linger agent`.
 
 ## [v0.4.0] - 2026-04

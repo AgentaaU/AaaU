@@ -145,6 +145,35 @@ let parse_new_json payload =
     end
   | _ -> Error "NEW_JSON payload must be a JSON object"
 
+let requested_agent_user t payload =
+  match Yojson.Safe.from_string payload with
+  | `Assoc fields ->
+    begin match List.assoc_opt "user" fields with
+    | None -> Ok t.agent_user
+    | Some (`String name) when name <> "" ->
+      (try
+        let account = Unix.getpwnam name in
+        let humans = Unix.getgrnam t.shared_group in
+        if account.Unix.pw_uid = 0 then Error "Agent must not be root"
+        else if not (groups_are_isolated ~agent_gid:account.Unix.pw_gid
+                       ~human_gid:humans.Unix.gr_gid ~agent_username:account.Unix.pw_name
+                       ~human_members:humans.Unix.gr_mem) then
+          Error "Agent must not belong to the human control group"
+        else if Unix.geteuid () <> 0 && Unix.geteuid () <> account.Unix.pw_uid then
+          Error "Selecting another agent user requires a root-run server"
+        else Ok account.Unix.pw_name
+      with Not_found -> Error "Agent account or human control group not found")
+    | _ -> Error "Missing or invalid JSON field: user"
+    end
+  | _ -> Error "NEW_JSON payload must be a JSON object"
+
+let new_json_defaults t payload =
+  match Yojson.Safe.from_string payload with
+  | `Assoc fields when not (List.mem_assoc "program" fields) && not (List.mem_assoc "args" fields) ->
+    Yojson.Safe.to_string (`Assoc (("program", `String t.default_program) ::
+      ("args", `List (List.map (fun arg -> `String arg) t.default_args)) :: fields))
+  | _ -> payload
+
 let handle_handshake t client_fd user_info =
   let* line_result = Client_io.read_line_with_remainder client_fd in
   match line_result with
@@ -182,11 +211,11 @@ let handle_handshake t client_fd user_info =
       )
     else if String.starts_with ~prefix:"NEW_JSON:" msg then
       let payload = String.sub msg 9 (String.length msg - 9) in
-      begin match parse_new_json payload with
-      | Error e -> Lwt.return_error e
-      | Ok (program, args, rows, cols) ->
+      begin match parse_new_json (new_json_defaults t payload), requested_agent_user t payload with
+      | Error e, _ | _, Error e -> Lwt.return_error e
+      | Ok (program, args, rows, cols), Ok agent_user ->
         let session_id = Uuidm.v4_gen (Random.State.make_self_init ()) () |> Uuidm.to_string in
-        let* result = Session.create ~session_id ~creator:user_info ~agent_user:t.agent_user ~editor_socket_path:t.editor_socket_path
+        let* result = Session.create ~session_id ~creator:user_info ~agent_user ~editor_socket_path:t.editor_socket_path
           ~program ~args ~rows ~cols ~audit:t.audit in
         match result with
         | Error e -> Lwt.return_error e

@@ -37,6 +37,18 @@ val stop : t -> unit Lwt.t
 val parse_new_json : string -> (string * string list * int * int, string) result
 (** Parse a [NEW_JSON:] payload into program, arguments, rows and columns. *)
 
+val new_json_defaults : t -> string -> string
+(** Fill in the server's configured default program and arguments for a
+    [NEW_JSON:] payload that omits both.  Payloads that already carry a
+    [program] or [args] field are returned unchanged. *)
+
+val requested_agent_user : t -> string -> (string, string) result
+(** Resolve the agent account requested by a [NEW_JSON:] payload.  A missing
+    [user] field falls back to the server's configured agent user.  An explicit
+    account must exist, must not be root, and must be isolated from the human
+    control group.  Only a root-run server may select an account other than the
+    one it is already running as. *)
+
 val authenticate_client :
   t -> Lwt_unix.file_descr -> (Auth.user_info, string) result Lwt.t
 (** Resolve the peer of a connected human socket. *)

@@ -319,6 +319,7 @@ aaau -s /var/run/aaau/server.sock -n <session-id> -r
 - `-n, --session` - Session ID to join
 - `-r, --readonly` - Read-only mode (observe only)
 - `-p, --program` - Program to run for new session
+- `-u, --user` - Isolated agent account for a new session (default: `agent`)
 
 ## Code Style Guidelines
 

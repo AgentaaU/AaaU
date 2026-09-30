@@ -13,6 +13,10 @@ let socket_path =
   let doc = "Server socket path" in
   Arg.(value & opt string "/var/run/aaau/server.sock" & info ["s"; "socket"] ~docv:"PATH" ~doc)
 
+let agent_user =
+  let doc = "System user for new sessions (ignored when joining an existing session)" in
+  Arg.(value & opt string "agent" & info ["u"; "user"] ~docv:"USER" ~doc)
+
 let session_id =
   let doc = "Existing session ID to join" in
   Arg.(value & opt (some string) None & info ["n"; "session"] ~docv:"ID" ~doc)
@@ -115,7 +119,7 @@ let start_editor_provider socket_path session_id command =
       let* () = Lwt.catch (fun () -> Lwt_unix.close socket) (fun _ -> Lwt.return_unit) in
       Lwt.return_none)
 
-let rec run_client_lwt_inner socket_path session_id readonly program program_alias no_editor_forwarding editor_command =
+let rec run_client_lwt_inner socket_path session_id readonly program program_alias no_editor_forwarding editor_command agent_user =
   Sys.set_signal Sys.sigpipe Sys.Signal_ignore;
   let requested_program =
     match (program, program_alias) with
@@ -158,19 +162,20 @@ let rec run_client_lwt_inner socket_path session_id readonly program program_ali
     match session_id with
     | Some id -> "SESSION:" ^ id
     | None ->
-      match program_spec with
-      | Some (prog, args) ->
-        let payload =
-          `Assoc [
+      let program_fields =
+        match program_spec with
+        | Some (prog, args) -> [
             ("program", `String prog);
             ("args", `List (List.map (fun arg -> `String arg) args));
-            ("rows", `Int rows);
-            ("cols", `Int cols);
           ]
-          |> Yojson.Safe.to_string
-        in
-        "NEW_JSON:" ^ payload
-      | None -> Printf.sprintf "NEW:%d:%d" rows cols
+        | None -> []
+      in
+      let payload = `Assoc (program_fields @ [
+        ("user", `String agent_user);
+        ("rows", `Int rows);
+        ("cols", `Int cols);
+      ]) |> Yojson.Safe.to_string in
+      "NEW_JSON:" ^ payload
   in
   let handshake_nl = handshake ^ "\n" in
   let* _ = Lwt_unix.write_string socket handshake_nl 0 (String.length handshake_nl) in
@@ -433,12 +438,12 @@ and run_interactive socket ~initial_output ~provider_socket =
       cleanup ();
       Lwt.fail e)
 
-let run_client_lwt socket_path session_id readonly program program_alias no_editor_forwarding editor_command =
+let run_client_lwt socket_path session_id readonly program program_alias no_editor_forwarding editor_command agent_user =
   active_socket_path := Some socket_path;
   Lwt.catch
     (fun () ->
       run_client_lwt_inner socket_path session_id readonly program program_alias
-        no_editor_forwarding editor_command)
+        no_editor_forwarding editor_command agent_user)
     (fun exn ->
       client_failed := true;
       socket_ref := None;
@@ -472,8 +477,8 @@ let run_client_lwt socket_path session_id readonly program program_alias no_edit
 let cmd =
   let doc = "Agent-as-User Bridge Client" in
   let info = Cmd.info "aaau" ~version:"0.1.0" ~doc in
-  Cmd.v info Term.(const (fun a b c d e f g -> Lwt_main.run (run_client_lwt a b c d e f g))
-    $ socket_path $ session_id $ readonly $ program $ program_alias $ no_editor_forwarding $ editor_command)
+  Cmd.v info Term.(const (fun a b c d e f g h -> Lwt_main.run (run_client_lwt a b c d e f g h))
+    $ socket_path $ session_id $ readonly $ program $ program_alias $ no_editor_forwarding $ editor_command $ agent_user)
 
 let () =
   let status = Cmd.eval cmd in

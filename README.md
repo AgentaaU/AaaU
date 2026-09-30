@@ -317,7 +317,12 @@ alone.
 
 ```bash
 # Create new session
+# (runs the default program as the default agent account, "agent")
 aaau -s /var/run/aaau/server.sock
+
+# Create a new session as a specific isolated agent account
+# (see `aaau-server create-user`)
+aaau -s /var/run/aaau/server.sock --user researcher
 
 # Join existing session
 aaau -s /var/run/aaau/server.sock -n <session-id>
@@ -325,6 +330,14 @@ aaau -s /var/run/aaau/server.sock -n <session-id>
 # Read-only mode (observe only)
 aaau -s /var/run/aaau/server.sock -n <session-id> -r
 ```
+
+`--user NAME` (also `-u`) selects the isolated agent account that runs a new
+session. It defaults to `agent`, matching the server default, and is ignored
+when joining an existing session with `--session`. The account must already
+exist, must not be root, and must not belong to the human control group (create
+additional accounts with `aaau-server create-user --name NAME`). A server that
+is not running as root can only select the account it already runs as; a
+root-run server may host any number of isolated agent accounts.
 
 ### Editing Codex or Claude buffers in your Emacs
 
