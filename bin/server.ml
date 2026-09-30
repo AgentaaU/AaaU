@@ -227,44 +227,22 @@ let run_command program args =
       (Unix.error_message err);
     false
 
-let run_init agent_user shared_group socket_path log_dir home_dir shell =
-  (* Check for root privileges *)
-  if Unix.getuid () <> 0 then begin
-    Printf.eprintf "Error: Need root permission to initialize environment.\n%!";
-    Printf.eprintf "Please run with sudo.\n%!";
-    exit 1
-  end;
-  
-  Printf.printf "=== AaaU Environment Initialization ===\n\n%!";
-  
+(** Shared account provisioning for init and create-user: system account,
+    private home, human-group isolation and optional systemd lingering. *)
+let provision_user agent_user shared_group home_dir shell =
   let exit_code = ref 0 in
-  
-  (* Step 1: Create shared group *)
-  Printf.printf "[1/6] Checking shared group '%s'...\n%!" shared_group;
-  if group_exists shared_group then begin
-    Printf.printf "    Group '%s' already exists.\n%!" shared_group
-  end else begin
-    Printf.printf "    Creating group '%s'...\n%!" shared_group;
-    if run_command "groupadd" ["--system"; shared_group] then
-      Printf.printf "    Group created successfully.\n%!"
-    else begin
-      Printf.eprintf "    ERROR: Failed to create group '%s'.\n%!" shared_group;
-      exit_code := 1
-    end
-  end;
-  
-  (* Step 2: Create agent user *)
-  Printf.printf "\n[2/6] Checking agent user '%s'...\n%!" agent_user;
+  Printf.printf "Checking agent user '%s'...\n%!" agent_user;
   if user_exists agent_user then begin
     Printf.printf "    User '%s' already exists.\n%!" agent_user;
     let account = Unix.getpwnam agent_user in
-    let human_gid = (Unix.getgrnam shared_group).Unix.gr_gid in
-    if account.Unix.pw_gid = human_gid then begin
+    if group_exists shared_group
+       && account.Unix.pw_gid = (Unix.getgrnam shared_group).Unix.gr_gid then begin
       Printf.eprintf "    ERROR: agent primary group must differ from human group '%s'.\n%!" shared_group;
       exit_code := 1
     end;
     (* Remove legacy supplementary access to the human control group. *)
-    ignore (run_command "gpasswd" ["-d"; agent_user; shared_group])
+    if group_exists shared_group then
+      ignore (run_command "gpasswd" ["-d"; agent_user; shared_group])
   end else begin
     Printf.printf "    Creating user '%s'...\n%!" agent_user;
     let home_parent = Filename.dirname home_dir in
@@ -298,7 +276,7 @@ let run_init agent_user shared_group socket_path log_dir home_dir shell =
      their own D-Bus and manage local units with `systemctl --user`.  Without
      it there is no user manager for the account, so those requests fail with
      "$DBUS_SESSION_BUS_ADDRESS and $XDG_RUNTIME_DIR not defined". *)
-  Printf.printf "\n[3/6] Enabling user-level systemd services for '%s'...\n%!" agent_user;
+  Printf.printf "Enabling user-level systemd services for '%s'...\n%!" agent_user;
   if user_exists agent_user then begin
     if run_command "loginctl" ["enable-linger"; agent_user] then
       Printf.printf "    Linger enabled; systemd --user starts at boot.\n%!"
@@ -311,6 +289,38 @@ let run_init agent_user shared_group socket_path log_dir home_dir shell =
       Printf.eprintf "    Retry later with: loginctl enable-linger %s\n%!" agent_user
     end
   end;
+
+  !exit_code
+
+let run_init agent_user shared_group socket_path log_dir home_dir shell =
+  (* Check for root privileges *)
+  if Unix.getuid () <> 0 then begin
+    Printf.eprintf "Error: Need root permission to initialize environment.\n%!";
+    Printf.eprintf "Please run with sudo.\n%!";
+    exit 1
+  end;
+
+  Printf.printf "=== AaaU Environment Initialization ===\n\n%!";
+
+  let exit_code = ref 0 in
+
+  (* Step 1: Create shared group *)
+  Printf.printf "[1/6] Checking shared group '%s'...\n%!" shared_group;
+  if group_exists shared_group then begin
+    Printf.printf "    Group '%s' already exists.\n%!" shared_group
+  end else begin
+    Printf.printf "    Creating group '%s'...\n%!" shared_group;
+    if run_command "groupadd" ["--system"; shared_group] then
+      Printf.printf "    Group created successfully.\n%!"
+    else begin
+      Printf.eprintf "    ERROR: Failed to create group '%s'.\n%!" shared_group;
+      exit_code := 1
+    end
+  end;
+
+  (* Steps 2 and 3: Provision the isolated agent account. *)
+  if provision_user agent_user shared_group home_dir shell <> 0 then
+    exit_code := 1;
 
   (* Step 4: Create socket directory *)
   Printf.printf "\n[4/6] Creating socket directory...\n%!";
@@ -375,10 +385,32 @@ let init_cmd =
   let info = Cmd.info "init" ~doc in
   Cmd.v info Term.(const run_init $ agent_user $ shared_group $ socket_path $ log_dir $ home_dir $ shell)
 
+(* Create an additional isolated account without provisioning server paths. *)
+let create_user_name =
+  let doc = "Name of the new isolated agent account" in
+  Arg.(required & opt (some string) None & info ["name"] ~docv:"USER" ~doc)
+
+let create_user_home =
+  let doc = "Home directory (defaults to /home/USER)" in
+  Arg.(value & opt (some string) None & info ["h"; "home"] ~docv:"DIR" ~doc)
+
+let run_create_user name shared_group home shell =
+  if Unix.getuid () <> 0 then begin
+    Printf.eprintf "Error: Need root permission to create a user. Please run with sudo.\n%!";
+    exit 1
+  end;
+  let home = match home with Some path -> path | None -> "/home/" ^ name in
+  exit (provision_user name shared_group home shell)
+
+let create_user_cmd =
+  let doc = "Create an isolated agent user (requires root)" in
+  Cmd.v (Cmd.info "create-user" ~doc)
+    Term.(const run_create_user $ create_user_name $ shared_group $ create_user_home $ shell)
+
 (* Main command *)
 let main_cmd =
   let doc = "Agent-as-User PTY Bridge Server" in
   let info = Cmd.info "aaau-server" ~version:"0.1.0" ~doc in
-  Cmd.group info [run_cmd; init_cmd]
+  Cmd.group info [run_cmd; init_cmd; create_user_cmd]
 
 let () = exit (Cmd.eval main_cmd)

@@ -246,3 +246,9 @@
  (modules test_bridge_coverage)
  (libraries AaaU logs)
  (enabled_if (= %{system} "linux")))
+
+(rule
+ (alias runtest)
+ (deps test_create_user.sh)
+ (enabled_if (= %{system} "linux"))
+ (action (run bash %{dep:test_create_user.sh} %{exe:../bin/server.exe})))

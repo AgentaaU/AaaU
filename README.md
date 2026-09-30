@@ -224,6 +224,27 @@ sudo aaau-server init \
   -h /home/agent
 ```
 
+To create an additional isolated agent account without changing server directories:
+
+```bash
+sudo aaau-server create-user --name researcher
+# Optional overrides:
+sudo aaau-server create-user --name researcher --home /srv/agents/researcher --shell /bin/bash
+```
+
+`--name` is required. The account is a system user with its own primary group,
+a private home (mode `0700`, default `/home/NAME`), and a locked password.
+The default login shell is `/bin/false`. No human-group membership or sudo access
+is granted. User-level systemd services are enabled through `loginctl enable-linger`;
+if that fails, the account is still created and a warning explains how to retry.
+The command uses the same account provisioning procedure as `init`, including
+securing existing accounts' homes and removing legacy supplementary membership
+in the human group (`--group`, default `aaau-users`). Existing accounts retain
+their current home and shell, as with `init`. An account whose primary group is
+the human group is reported as an error.
+To run a server as this account, provision its server directories
+separately with `init --user NAME --home /home/NAME` and configure `run --user NAME`.
+
 The `init` command will:
 1. Create the shared group (e.g., `agent`)
 2. Create the agent user (e.g., `agent`)
