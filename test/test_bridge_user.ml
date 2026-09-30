@@ -216,9 +216,47 @@ let test_handshake_explicit_user () =
          let* () = Lwt.catch (fun () -> Lwt_unix.close peer_fd) (fun _ -> Lwt.return_unit) in
          Lwt.catch (fun () -> Lwt_unix.close server_fd) (fun _ -> Lwt.return_unit)))
 
-let () =
+let run_tests () =
   test_new_json_defaults ();
   test_requested_agent_user ();
   test_requested_agent_user_rejects_shared_group ();
   test_handshake_explicit_user ();
   print_endline "bridge user tests passed"
+
+
+let () =
+  run_tests ();
+  (* Forgejo runs the coverage suite as root. Also exercise the unprivileged
+     server path: it must accept its own account and refuse switching to a
+     different UID. A normal exit flushes the child's Bisect counters. *)
+  if Unix.geteuid () = 0 then begin
+    let account = Unix.getpwnam (requestable_user ()) in
+    (* The build tree is root-owned in CI. Give the child a writable counter
+       directory, then collect its coverage files before removing it. *)
+    let counters = Filename.temp_file "aaau-user-counters-" "" in
+    Unix.unlink counters;
+    Unix.mkdir counters 0o700;
+    Unix.chown counters account.Unix.pw_uid account.Unix.pw_gid;
+    Fun.protect ~finally:(fun () -> remove_tree counters) (fun () ->
+    match Unix.fork () with
+    | 0 ->
+      Unix.putenv "BISECT_FILE" (Filename.concat counters "bisect");
+      Unix.setgroups [||];
+      Unix.setgid account.Unix.pw_gid;
+      Unix.setuid account.Unix.pw_uid;
+      run_tests ();
+      exit 0
+    | pid ->
+      match snd (Unix.waitpid [] pid) with
+      | Unix.WEXITED 0 ->
+        Array.iter (fun name ->
+          if Filename.check_suffix name ".coverage" then begin
+            let input = open_in_bin (Filename.concat counters name) in
+            let data = really_input_string input (in_channel_length input) in
+            close_in input;
+            let output = open_out_bin ("unprivileged-" ^ name) in
+            output_string output data;
+            close_out output
+          end) (Sys.readdir counters)
+      | _ -> fail "unprivileged agent-user tests failed")
+  end
