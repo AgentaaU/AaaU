@@ -233,7 +233,7 @@ let () =
     let account = Unix.getpwnam (requestable_user ()) in
     (* The build tree is root-owned in CI. Give the child a writable counter
        directory, then collect its coverage files before removing it. *)
-    let counters = Filename.temp_file "aaau-user-counters-" "" in
+    let counters = Filename.temp_file ~temp_dir:"/tmp" "aaau-user-counters-" "" in
     Unix.unlink counters;
     Unix.mkdir counters 0o700;
     Unix.chown counters account.Unix.pw_uid account.Unix.pw_gid;
@@ -241,6 +241,7 @@ let () =
     match Unix.fork () with
     | 0 ->
       Unix.putenv "BISECT_FILE" (Filename.concat counters "bisect");
+      Filename.set_temp_dir_name counters;
       Unix.setgroups [||];
       Unix.setgid account.Unix.pw_gid;
       Unix.setuid account.Unix.pw_uid;
